@@ -1,4 +1,4 @@
-// Configure Terminal.app's default/startup profile — managed by zsh-setup
+// Configure Terminal.app's default/startup profile — managed by cli-setup
 //   osascript -l JavaScript terminal-app.js [fontPostScriptName|-] [prefsDomain]
 //   ("-" = leave the font alone)
 //

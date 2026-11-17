@@ -1,4 +1,4 @@
-# "soft" theme for fast-syntax-highlighting — managed by zsh-setup
+# "soft" theme for fast-syntax-highlighting — managed by cli-setup
 # Muted 256-colour pastels that match the Starship prompt. No background blocks, no bold.
 #   149 green · 110 blue · 116 teal · 176 pink · 180 tan · 215 orange · 167 red · 24x greys
 

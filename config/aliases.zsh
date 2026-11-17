@@ -1,4 +1,4 @@
-# Common aliases — managed by zsh-setup
+# Common aliases — managed by cli-setup
 # Git aliases use the same names as Oh My Zsh, so muscle memory carries over.
 # Add your own in ~/.zsh/.zshrc.local (loaded after this file, so it can override anything here).
 

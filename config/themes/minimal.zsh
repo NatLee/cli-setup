@@ -1,4 +1,4 @@
-# "minimal" theme for fast-syntax-highlighting — managed by zsh-setup
+# "minimal" theme for fast-syntax-highlighting — managed by cli-setup
 # Almost monochrome: only errors, strings and paths get a hint of colour.
 #   252 text · 245 grey · 110 blue · 180 tan · 167 red
 

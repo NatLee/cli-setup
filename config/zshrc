@@ -1,5 +1,5 @@
-# ~/.zsh/.zshrc  —  managed by zsh-setup (macOS / Linux / WSL)
-# https://github.com/NatLee/zsh-setup
+# ~/.zsh/.zshrc  —  managed by cli-setup (macOS / Linux / WSL)
+# https://github.com/NatLee/cli-setup
 #
 # Options chosen at install time live in ~/.zsh/options.zsh (re-run install.sh to change them).
 # Personal tweaks go in ~/.zsh/.zshrc.local — it is never overwritten.

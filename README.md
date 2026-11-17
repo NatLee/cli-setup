@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/cover.png" alt="zsh-setup" width="100%">
+  <img src="assets/cover.png" alt="cli-setup" width="100%">
 </p>
 
 <p align="center">
@@ -14,13 +14,13 @@
 **macOS / Linux / WSL**（在終端機貼上）：
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/NatLee/zsh-setup/main/install.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/NatLee/cli-setup/main/install.sh)"
 ```
 
 **Windows**（在 PowerShell 貼上）：
 
 ```powershell
-irm https://raw.githubusercontent.com/NatLee/zsh-setup/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/NatLee/cli-setup/main/install.ps1 | iex
 ```
 
 執行後會先出現選單，可以挑選要裝的外掛和外觀，直接按 Enter 就是推薦設定。之後想改選項，再執行一次同一行指令就好，選單會記住你上次的選擇。
@@ -129,9 +129,9 @@ Windows 版會移除 PowerShell 內建、名稱衝突的 `gc`（Get-Content）�
 | | 啟動時間 |
 | --- | --- |
 | 一般的 `conda init` + 外掛（macOS） | ~280 ms |
-| **zsh-setup（macOS）** | **~40 ms** |
-| **zsh-setup（Linux）** | **~20 ms** |
-| **zsh-setup（PowerShell 設定檔，快取後）** | **~20 ms**（不含 PowerShell 本身的啟動時間） |
+| **cli-setup（macOS）** | **~40 ms** |
+| **cli-setup（Linux）** | **~20 ms** |
+| **cli-setup（PowerShell 設定檔，快取後）** | **~20 ms**（不含 PowerShell 本身的啟動時間） |
 
 變快的原因：
 
@@ -168,7 +168,7 @@ Windows 版會移除 PowerShell 內建、名稱衝突的 `gc`（Get-Content）�
 **install.sh**
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/NatLee/zsh-setup/main/install.sh)" -- \
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/NatLee/cli-setup/main/install.sh)" -- \
   -y --plugins=fzf-tab,zoxide,fzf,aliases --theme=minimal --suggest-color=dim --ip=off
 ```
 
@@ -187,7 +187,7 @@ Windows 版會移除 PowerShell 內建、名稱衝突的 `gc`（Get-Content）�
 **install.ps1**
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/NatLee/zsh-setup/main/install.ps1))) -Yes -Theme minimal -Ip off
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/NatLee/cli-setup/main/install.ps1))) -Yes -Theme minimal -Ip off
 ```
 
 | 參數 | 說明 |
@@ -223,7 +223,7 @@ Windows 版會移除 PowerShell 內建、名稱衝突的 `gc`（Get-Content）�
 **Windows**
 
 ```
-~\.config\zsh-setup\
+~\.config\cli-setup\
 ├── profile.ps1       ← PowerShell 設定（config/windows/profile.ps1）
 ├── options.ps1       ← 你在選單裡的選擇
 ├── aliases.ps1       ← 常用 alias
@@ -231,10 +231,10 @@ Windows 版會移除 PowerShell 內建、名稱衝突的 `gc`（Get-Content）�
 ~\.config\starship.toml
 Documents\PowerShell\profile.ps1         ← 加上一段載入上面 profile.ps1 的程式碼（PowerShell 7）
 Documents\WindowsPowerShell\profile.ps1  ← 同上（Windows PowerShell 5.1）
-%LOCALAPPDATA%\zsh-setup\cache\          ← 初始化快取
+%LOCALAPPDATA%\cli-setup\cache\          ← 初始化快取
 ```
 
-原本就有的設定檔，如果內容和新的不一樣，會先備份到 `~/.zsh-setup-backup/<時間>/`，再寫入新的。
+原本就有的設定檔，如果內容和新的不一樣，會先備份到 `~/.cli-setup-backup/<時間>/`，再寫入新的。
 
 ## ⚙️ 自訂
 
@@ -243,20 +243,20 @@ Documents\WindowsPowerShell\profile.ps1  ← 同上（Windows PowerShell 5.1）
 | 外掛、顏色、主題、conda 模式 | 重新執行安裝指令 |
 | Prompt 的顏色、分段、格式 | `~/.config/starship.toml`，參考 [Starship 文件](https://starship.rs/config/) |
 | 在 base 環境時隱藏 conda 那一格 | `starship.toml` 的 `[conda]` 改成 `ignore_base = true` |
-| 自己的 alias、環境變數 | zsh：`~/.zsh/.zshrc.local`；PowerShell：`~\.config\zsh-setup\local.ps1` |
+| 自己的 alias、環境變數 | zsh：`~/.zsh/.zshrc.local`；PowerShell：`~\.config\cli-setup\local.ps1` |
 
 > 重新執行安裝時會覆蓋 `starship.toml`，覆蓋前會先備份；如果你手動改過，記得從備份中把修改搬回來。
 
 ## ↩️ 還原
 
 ```bash
-ls ~/.zsh-setup-backup/                                   # 找到要還原的時間點
-cp ~/.zsh-setup-backup/<時間>/.zshrc ~/.zshrc
-cp ~/.zsh-setup-backup/<時間>/starship.toml ~/.config/starship.toml
-defaults import com.apple.Terminal ~/.zsh-setup-backup/<時間>/com.apple.Terminal.plist   # macOS：還原 Terminal.app
+ls ~/.cli-setup-backup/                                   # 找到要還原的時間點
+cp ~/.cli-setup-backup/<時間>/.zshrc ~/.zshrc
+cp ~/.cli-setup-backup/<時間>/starship.toml ~/.config/starship.toml
+defaults import com.apple.Terminal ~/.cli-setup-backup/<時間>/com.apple.Terminal.plist   # macOS：還原 Terminal.app
 ```
 
-Windows：從 `~\.zsh-setup-backup\<時間>\` 把檔案複製回去，並刪除 `Documents\PowerShell\profile.ps1` 裡 `# >>> zsh-setup >>>` 到 `# <<< zsh-setup <<<` 那一段。
+Windows：從 `~\.cli-setup-backup\<時間>\` 把檔案複製回去，並刪除 `Documents\PowerShell\profile.ps1` 裡 `# >>> cli-setup >>>` 到 `# <<< cli-setup <<<` 那一段。
 
 ## 📄 License
 

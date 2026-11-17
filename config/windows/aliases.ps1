@@ -1,4 +1,4 @@
-# zsh-setup -- common aliases for PowerShell (Windows)
+# cli-setup -- common aliases for PowerShell (Windows)
 # Same names as the zsh version; git aliases match Oh My Zsh. Keep this file ASCII-only.
 # Add your own in local.ps1 (loaded later, so it can override anything here).
 

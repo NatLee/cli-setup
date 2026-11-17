@@ -1,12 +1,12 @@
-# zsh-setup -- PowerShell profile for Windows
-# https://github.com/NatLee/zsh-setup
+# cli-setup -- PowerShell profile for Windows
+# https://github.com/NatLee/cli-setup
 #
 # Loaded from your $PROFILE. Options chosen at install time live in options.ps1 next to this file
 # (re-run install.ps1 to change them). Personal tweaks go in local.ps1 -- it is never overwritten.
 # NOTE: keep this file ASCII-only (Windows PowerShell 5.1 reads BOM-less files as ANSI).
 
-$ZsDir   = Join-Path $HOME '.config\zsh-setup'
-$ZsCache = Join-Path $env:LOCALAPPDATA 'zsh-setup\cache'
+$ZsDir   = Join-Path $HOME '.config\cli-setup'
+$ZsCache = Join-Path $env:LOCALAPPDATA 'cli-setup\cache'
 if (-not (Test-Path $ZsCache)) { New-Item -ItemType Directory -Force -Path $ZsCache | Out-Null }
 
 # ---------- defaults (overridden by options.ps1) ----------
