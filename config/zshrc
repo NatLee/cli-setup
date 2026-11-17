@@ -1,5 +1,5 @@
-# ~/.zsh/.zshrc  —  managed by mac-zsh-setup
-# https://github.com/NatLee/mac-zsh-setup
+# ~/.zsh/.zshrc  —  managed by zsh-setup (macOS / Linux / WSL)
+# https://github.com/NatLee/zsh-setup
 #
 # Options chosen at install time live in ~/.zsh/options.zsh (re-run install.sh to change them).
 # Personal tweaks go in ~/.zsh/.zshrc.local — it is never overwritten.
@@ -7,6 +7,9 @@
 export ZSH=$HOME/.zsh
 ZSH_CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/zsh
 [[ -d $ZSH_CACHE ]] || mkdir -p $ZSH_CACHE
+
+typeset -U path fpath                       # no duplicate PATH entries
+[[ -d $HOME/.local/bin ]] && path=($HOME/.local/bin $path)
 
 # ---------- defaults (overridden by options.zsh) ----------
 MZS_PLUGINS=(autosuggestions syntax-highlighting completions)
@@ -66,7 +69,7 @@ bindkey -e
 # ================================
 # Homebrew (cached `brew shellenv`)
 # ================================
-for __brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+for __brew in /opt/homebrew/bin/brew /usr/local/bin/brew /home/linuxbrew/.linuxbrew/bin/brew; do
   [[ -x $__brew ]] && { _mzs_cached brew-shellenv $__brew $__brew shellenv; break; }
 done
 unset __brew
@@ -97,7 +100,11 @@ zstyle ':completion:*:git-checkout:*' sort false
 if _mzs_has fzf-tab; then
   zstyle ':completion:*' menu no
   zstyle ':fzf-tab:*' fzf-flags --height=40% --color=bg+:236,hl:110,hl+:110,pointer:149,marker:176,prompt:110
-  zstyle ':fzf-tab:complete:cd:*' fzf-preview 'ls -1 -G $realpath'
+  if [[ $OSTYPE == darwin* ]]; then
+    zstyle ':fzf-tab:complete:cd:*' fzf-preview 'ls -1 -G $realpath'
+  else
+    zstyle ':fzf-tab:complete:cd:*' fzf-preview 'ls -1 --color=always $realpath'
+  fi
 else
   zstyle ':completion:*' menu select
 fi
@@ -145,7 +152,14 @@ fi
 # ================================
 if _mzs_has fzf && (( $+commands[fzf] )); then
   export FZF_DEFAULT_OPTS='--height=40% --layout=reverse --border --color=bg+:236,hl:110,hl+:110,pointer:149,marker:176,prompt:110,info:244'
-  _mzs_cached fzf $commands[fzf] fzf --zsh    # Ctrl-R history · Ctrl-T files · Alt-C cd
+  # Ctrl-R history · Ctrl-T files · Alt-C cd   (fzf >= 0.48; older distro packages ship separate scripts)
+  if ! _mzs_cached fzf $commands[fzf] fzf --zsh; then
+    for __f in /usr/share/doc/fzf/examples/key-bindings.zsh /usr/share/fzf/key-bindings.zsh \
+               /usr/share/fzf/shell/key-bindings.zsh; do
+      [[ -r $__f ]] && { source $__f; break; }
+    done
+    unset __f
+  fi
 fi
 
 _mzs_has aliases && [[ -r $ZSH/aliases.zsh ]] && source $ZSH/aliases.zsh
@@ -167,8 +181,9 @@ fi
 # ================================
 export CONDA_CHANGEPS1=false
 if [[ $MZS_CONDA != off ]]; then
-  for __root in $HOME/miniconda3 $HOME/anaconda3 $HOME/miniforge3 \
-                /opt/homebrew/Caskroom/miniconda/base /opt/homebrew/Caskroom/miniforge/base; do
+  for __root in $HOME/miniconda3 $HOME/anaconda3 $HOME/miniforge3 $HOME/mambaforge \
+                /opt/homebrew/Caskroom/miniconda/base /opt/homebrew/Caskroom/miniforge/base \
+                /opt/conda /opt/miniconda3 /opt/anaconda3; do
     [[ -x $__root/bin/conda ]] || continue
     __root=${__root:A}    # resolve symlinks, as conda does
     case $MZS_CONDA in

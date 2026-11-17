@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# mac-zsh-setup — Homebrew + zsh 外掛 + Starship + Hack Nerd Font，一行搞定。
+# zsh-setup — zsh 外掛 + Starship + Hack Nerd Font，一行搞定（macOS / Linux / WSL）。
 #
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/NatLee/mac-zsh-setup/main/install.sh)"
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/NatLee/zsh-setup/main/install.sh)"
 #
 # 直接執行會出現互動選單；也可以用參數指定（搭配 -y 完全不詢問）：
 #   -y, --yes                 不顯示選單，使用預設值（或上次安裝時的選擇）
@@ -13,24 +13,37 @@
 #   --time=on|off             Prompt 右側顯示時間
 #   --ip=on|off               Prompt 右側顯示本機 IP
 #   --conda=MODE              conda 載入方式：fast | lazy | full | off
-#   --terminal-app=on|off     設定 Terminal.app：Home/End 鍵 + Hack Nerd Font Mono 字型
-#   --no-font                 不安裝 Hack Nerd Font
-#   --skip-brew               不使用 Homebrew（需已安裝 git 與 starship）
+#   --font=on|off             安裝 Hack Nerd Font（--no-font = --font=off）
+#   --terminal-app=on|off     [macOS] 設定 Terminal.app：Home/End 鍵 + Hack Nerd Font Mono 字型
+#   --skip-packages           不安裝任何套件（需已有 zsh、git、starship；舊名 --skip-brew）
 #   -h, --help                顯示說明
+#
+# Windows 請改用 PowerShell 版本：
+#   irm https://raw.githubusercontent.com/NatLee/zsh-setup/main/install.ps1 | iex
 #
 # bash 3.2 compatible (macOS /bin/bash).
 set -euo pipefail
 
-REPO_URL="https://github.com/NatLee/mac-zsh-setup.git"
+REPO_URL="https://github.com/NatLee/zsh-setup.git"
 ZSH_DIR="$HOME/.zsh"
 PLUGIN_DIR="$ZSH_DIR/plugins"
 OPTIONS_FILE="$ZSH_DIR/options.zsh"
 STARSHIP_TOML="$HOME/.config/starship.toml"
 ZSH_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
-BACKUP_DIR="$HOME/.mac-zsh-setup-backup/$(date +%Y%m%d-%H%M%S)"
+LOCAL_BIN="$HOME/.local/bin"
+BACKUP_DIR="$HOME/.zsh-setup-backup/$(date +%Y%m%d-%H%M%S)"
 
 CORE_PLUGINS="autosuggestions syntax-highlighting completions"
 OPTIONAL="fzf-tab history-substring-search you-should-use zoxide fzf eza aliases"
+
+# ---------- platform ----------
+OS="$(uname -s)"
+ARCH="$(uname -m)"
+IS_MAC=0; IS_LINUX=0; IS_WSL=0
+case "$OS" in
+  Darwin) IS_MAC=1 ;;
+  Linux)  IS_LINUX=1; grep -qi microsoft /proc/version 2>/dev/null && IS_WSL=1 ;;
+esac
 
 # ---------- defaults (overridden by a previous install, then by flags / menu) ----------
 SEL="fzf-tab history-substring-search zoxide fzf aliases"
@@ -41,9 +54,13 @@ CONDA_MODE=fast
 PROMPT_TIME=1
 PROMPT_IP=1
 INSTALL_FONT=1
-TERMINAL_APP=1
-SKIP_BREW=0
+TERMINAL_APP=$IS_MAC
+SKIP_PKGS=0
 ASSUME_YES=0
+# Linux without a desktop (servers, containers, WSL): the font belongs on the machine you type on.
+if [[ $IS_LINUX -eq 1 ]] && { [[ $IS_WSL -eq 1 ]] || [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; }; then
+  INSTALL_FONT=0
+fi
 
 # ---------- helpers ----------
 if [[ -t 1 ]]; then
@@ -57,7 +74,8 @@ step() { printf '\n%s==>%s %s\n' "$C_BLUE" "$C_RESET" "$*"; }
 ok()   { printf '  %s✔%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
 warn() { printf '  %s!%s %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
 die()  { printf '%s✖ %s%s\n' "$C_RED" "$*" "$C_RESET" >&2; exit 1; }
-usage() { sed -n '3,21p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,25p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; }
+have() { command -v "$1" >/dev/null 2>&1; }
 
 has()      { case " $SEL " in *" $1 "*) return 0 ;; esac; return 1; }
 toggle() {
@@ -82,7 +100,7 @@ plugin_dir() {
     you-should-use)           echo "zsh-you-should-use|https://github.com/MichaelAquilina/zsh-you-should-use.git" ;;
   esac
 }
-brew_dep() {
+tool_dep() {
   case "$1" in
     fzf-tab|fzf) echo fzf ;;
     zoxide)      echo zoxide ;;
@@ -120,12 +138,20 @@ set_starship_disabled() {   # <file> <section> <true|false>
     insec && /^disabled[[:space:]]*=/ { print "disabled = " val; next }
     { print }' "$1" > "$tmp" && mv "$tmp" "$1"
 }
+now_ms() {
+  local t; t="$(date +%s%N 2>/dev/null)"
+  if [[ "$t" =~ ^[0-9]+$ ]]; then echo $((t / 1000000)); else perl -MTime::HiRes=time -e 'printf "%d", time*1000'; fi
+}
+
+same_file() {   # cmp is missing on minimal Fedora / openSUSE images
+  if have cmp; then cmp -s "$1" "$2"; else [[ "$(cat "$1"; echo x)" == "$(cat "$2"; echo x)" ]]; fi
+}
 
 # Back up a file/symlink/dir before replacing it (only if it differs from the new one).
 backup() {
   local target="$1" new="${2:-}"
   [[ -e "$target" || -L "$target" ]] || return 0
-  if [[ -n "$new" && -f "$target" && ! -L "$target" ]] && cmp -s "$target" "$new"; then
+  if [[ -n "$new" && -f "$target" && ! -L "$target" ]] && same_file "$target" "$new"; then
     return 0
   fi
   mkdir -p "$BACKUP_DIR"
@@ -133,23 +159,93 @@ backup() {
   warn "已備份 $target → $BACKUP_DIR/"
 }
 
-load_brew_env() {
-  if [[ -x /opt/homebrew/bin/brew ]]; then eval "$(/opt/homebrew/bin/brew shellenv)"
-  elif [[ -x /usr/local/bin/brew ]]; then eval "$(/usr/local/bin/brew shellenv)"; fi
-}
-
 find_conda() {
   local r
-  for r in "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/miniforge3" \
-           /opt/homebrew/Caskroom/miniconda/base /opt/homebrew/Caskroom/miniforge/base; do
+  for r in "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/miniforge3" "$HOME/mambaforge" \
+           /opt/homebrew/Caskroom/miniconda/base /opt/homebrew/Caskroom/miniforge/base \
+           /opt/conda /opt/miniconda3 /opt/anaconda3; do
     [[ -x "$r/bin/conda" ]] && { echo "$r"; return 0; }
   done
   return 1
 }
 
+font_installed() {
+  local f
+  for f in "$HOME/Library/Fonts"/HackNerdFontMono-Regular.* /Library/Fonts/HackNerdFontMono-Regular.* \
+           "$HOME/.local/share/fonts"/HackNerdFont/HackNerdFontMono-Regular.* \
+           "$HOME/.local/share/fonts"/HackNerdFontMono-Regular.* /usr/share/fonts/*/HackNerdFontMono-Regular.*; do
+    [[ -e "$f" ]] && return 0
+  done
+  have fc-list && fc-list 2>/dev/null | grep -qi "Hack Nerd Font Mono" && return 0
+  return 1
+}
+
+# ---------- Linux package helpers ----------
+SUDO=""
+PM=""
+PM_SYNCED=0
+detect_pm() {
+  if   have apt-get; then PM=apt
+  elif have dnf;     then PM=dnf
+  elif have pacman;  then PM=pacman
+  elif have zypper;  then PM=zypper
+  fi
+}
+pm_install() {   # quietly try to install one or more packages; non-zero if it failed
+  case "$PM" in
+    apt)
+      if [[ $PM_SYNCED -eq 0 ]]; then $SUDO apt-get update -qq >/dev/null 2>&1 || true; PM_SYNCED=1; fi
+      DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq "$@" >/dev/null 2>&1 ;;
+    dnf)    $SUDO dnf install -y -q "$@" >/dev/null 2>&1 ;;
+    pacman)
+      if [[ $PM_SYNCED -eq 0 ]]; then $SUDO pacman -Sy --noconfirm >/dev/null 2>&1 || true; PM_SYNCED=1; fi
+      $SUDO pacman -S --noconfirm --needed "$@" >/dev/null 2>&1 ;;
+    zypper) $SUDO zypper -n -q install "$@" >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+fzf_ok() { have fzf && fzf --zsh >/dev/null 2>&1; }   # shell integration needs fzf >= 0.48
+
+linux_install_tool() {   # <tool>  — package manager first, official release as fallback
+  local t="$1" tmp
+  case "$t" in
+    starship)
+      pm_install starship && have starship && return 0
+      curl -fsSL https://starship.rs/install.sh | sh -s -- -y -b "$LOCAL_BIN" >/dev/null ;;
+    fzf)
+      fzf_ok && return 0
+      pm_install fzf; fzf_ok && return 0
+      rm -rf "$HOME/.fzf"
+      git clone --quiet --depth 1 https://github.com/junegunn/fzf.git "$HOME/.fzf"
+      "$HOME/.fzf/install" --bin >/dev/null
+      ln -sf "$HOME/.fzf/bin/fzf" "$LOCAL_BIN/fzf"
+      hash -r ;;
+    zoxide)
+      pm_install zoxide && have zoxide && return 0
+      curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh >/dev/null 2>&1 ;;
+    eza)
+      pm_install eza && have eza && return 0
+      case "$ARCH" in x86_64|amd64) a=x86_64 ;; aarch64|arm64) a=aarch64 ;; *) return 1 ;; esac
+      tmp="$(mktemp -d)"
+      curl -fsSL "https://github.com/eza-community/eza/releases/latest/download/eza_${a}-unknown-linux-gnu.tar.gz" | tar -xz -C "$tmp"
+      install -m 755 "$tmp/eza" "$LOCAL_BIN/eza"; rm -rf "$tmp" ;;
+  esac
+}
+
+linux_install_font() {
+  local dir="$HOME/.local/share/fonts/HackNerdFont" tmp
+  tmp="$(mktemp -d)"
+  curl -fsSL -o "$tmp/Hack.zip" https://github.com/ryanoasis/nerd-fonts/releases/latest/download/Hack.zip
+  mkdir -p "$dir"
+  unzip -o -q "$tmp/Hack.zip" 'HackNerdFont*.ttf' -d "$dir"
+  rm -rf "$tmp"
+  have fc-cache && fc-cache -f "$dir" >/dev/null 2>&1 || true
+}
+
 # ---------- 0. sanity ----------
-[[ "$(uname -s)" == "Darwin" ]] || die "這個腳本只支援 macOS。"
-[[ $EUID -ne 0 ]] || die "請用一般使用者執行，不要用 root / sudo。"
+[[ $IS_MAC -eq 1 || $IS_LINUX -eq 1 ]] || die "不支援的系統：${OS}。Windows 請改用 install.ps1（見 README）。"
+if [[ $IS_MAC -eq 1 && $EUID -eq 0 ]]; then die "請用一般使用者執行，不要用 root / sudo。"; fi
+if [[ $IS_LINUX -eq 1 && $EUID -ne 0 ]] && have sudo; then SUDO="sudo"; fi
 
 # ---------- 1. previous choices ----------
 if [[ -r "$OPTIONS_FILE" ]]; then
@@ -167,7 +263,7 @@ if [[ -r "$OPTIONS_FILE" ]]; then
   CONDA_MODE="${MZS_CONDA:-$CONDA_MODE}"
   PROMPT_TIME="${MZS_PROMPT_TIME:-$PROMPT_TIME}"
   PROMPT_IP="${MZS_PROMPT_IP:-$PROMPT_IP}"
-  TERMINAL_APP="${MZS_TERMINAL_APP:-$TERMINAL_APP}"
+  [[ $IS_MAC -eq 1 ]] && TERMINAL_APP="${MZS_TERMINAL_APP:-$TERMINAL_APP}"
 fi
 
 # ---------- 2. flags ----------
@@ -197,16 +293,21 @@ for arg in "$@"; do
       case "$CONDA_MODE" in fast|lazy|full|off) ;; *) die "--conda 只能是 fast / lazy / full / off" ;; esac ;;
     --time=on)  PROMPT_TIME=1 ;;  --time=off) PROMPT_TIME=0 ;;
     --ip=on)    PROMPT_IP=1 ;;    --ip=off)   PROMPT_IP=0 ;;
-    --terminal-app=on)  TERMINAL_APP=1 ;;  --terminal-app=off) TERMINAL_APP=0 ;;
-    --no-font)   INSTALL_FONT=0 ;;
-    --skip-brew) SKIP_BREW=1 ;;
+    --font=on)  INSTALL_FONT=1 ;; --font=off|--no-font) INSTALL_FONT=0 ;;
+    --terminal-app=on)  TERMINAL_APP=$IS_MAC ;;  --terminal-app=off) TERMINAL_APP=0 ;;
+    --skip-packages|--skip-brew) SKIP_PKGS=1 ;;
     -h|--help)   usage; exit 0 ;;
     *) die "未知的參數：${arg}（用 --help 查看說明）" ;;
   esac
 done
 
-printf '\n%s%s mac-zsh-setup %s %sHomebrew · zsh 外掛 · Starship · Hack Nerd Font%s\n' \
-  "$C_BOLD" "$C_BLUE" "$C_RESET" "$C_DIM" "$C_RESET"
+if [[ $IS_MAC -eq 1 ]]; then PLATFORM="macOS $(sw_vers -productVersion 2>/dev/null)"
+else
+  PLATFORM="$( . /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-Linux}" || echo Linux)"
+  [[ $IS_WSL -eq 1 ]] && PLATFORM="$PLATFORM (WSL)"
+fi
+printf '\n%s%s zsh-setup %s %szsh 外掛 · Starship · Hack Nerd Font — %s%s\n' \
+  "$C_BOLD" "$C_BLUE" "$C_RESET" "$C_DIM" "$PLATFORM" "$C_RESET"
 
 # ---------- 3. interactive menu ----------
 CONDA_ROOT="$(find_conda || true)"
@@ -238,13 +339,18 @@ show_menu() {
   else
     printf '  %s%2d Conda 載入方式  （沒有偵測到 conda）%s\n' "$C_DIM" 12 "$C_RESET"
   fi
-  if [[ $SKIP_BREW -eq 1 ]]; then
-    printf '  %s%2d 安裝 Hack Nerd Font （--skip-brew，略過）%s\n' "$C_DIM" 13 "$C_RESET"
+  if [[ $SKIP_PKGS -eq 1 ]]; then
+    printf '  %s%2d 安裝 Hack Nerd Font （--skip-packages，略過）%s\n' "$C_DIM" 13 "$C_RESET"
   else
-    printf '  %2d 安裝 Hack Nerd Font  %s\n' 13 "$(onoff "$INSTALL_FONT")"
+    local fnote=""
+    [[ $IS_WSL -eq 1 ]] && fnote="WSL：字型要裝在 Windows 端（執行 install.ps1）"
+    [[ $IS_LINUX -eq 1 && $IS_WSL -eq 0 && -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] && fnote="沒有桌面環境：字型要裝在你打字的那台電腦"
+    printf '  %2d 安裝 Hack Nerd Font  %s  %s%s%s\n' 13 "$(onoff "$INSTALL_FONT")" "$C_DIM" "$fnote" "$C_RESET"
   fi
-  printf '  %2d 設定 Terminal.app  %s  %sHome/End 鍵送給 shell、字型換成 Hack Nerd Font Mono%s\n' \
-    14 "$(onoff "$TERMINAL_APP")" "$C_DIM" "$C_RESET"
+  if [[ $IS_MAC -eq 1 ]]; then
+    printf '  %2d 設定 Terminal.app  %s  %sHome/End 鍵送給 shell、字型換成 Hack Nerd Font Mono%s\n' \
+      14 "$(onoff "$TERMINAL_APP")" "$C_DIM" "$C_RESET"
+  fi
   printf '\n  %s★ 推薦%s  輸入編號切換（可一次多個，例如 %s1 8 9%s），直接 Enter 開始安裝，q 離開\n' \
     "$C_YELLOW" "$C_RESET" "$C_BOLD" "$C_RESET"
 }
@@ -265,8 +371,8 @@ if [[ $ASSUME_YES -eq 0 ]] && { : </dev/tty; } 2>/dev/null; then
         10) PROMPT_TIME=$((1-PROMPT_TIME)) ;;
         11) PROMPT_IP=$((1-PROMPT_IP)) ;;
         12) [[ -n "$CONDA_ROOT" ]] && case "$CONDA_MODE" in fast) CONDA_MODE=lazy ;; lazy) CONDA_MODE=full ;; full) CONDA_MODE=off ;; *) CONDA_MODE=fast ;; esac ;;
-        13) [[ $SKIP_BREW -eq 0 ]] && INSTALL_FONT=$((1-INSTALL_FONT)) ;;
-        14) TERMINAL_APP=$((1-TERMINAL_APP)) ;;
+        13) [[ $SKIP_PKGS -eq 0 ]] && INSTALL_FONT=$((1-INSTALL_FONT)) ;;
+        14) [[ $IS_MAC -eq 1 ]] && TERMINAL_APP=$((1-TERMINAL_APP)) ;;
         *)  warn "沒有這個選項：$n" ;;
       esac
     done
@@ -277,29 +383,43 @@ fi
 # normalise selection order
 _sel=""; for p in $OPTIONAL; do has "$p" && _sel="$_sel $p"; done; SEL="${_sel# }"
 
-# ---------- 4. Homebrew & packages ----------
-if [[ $SKIP_BREW -eq 0 ]]; then
+tools=""
+for p in $SEL; do
+  d="$(tool_dep "$p")"
+  [[ -n "$d" ]] && case " $tools " in *" $d "*) ;; *) tools="$tools $d" ;; esac
+done
+tools="${tools# }"
+
+mkdir -p "$LOCAL_BIN"
+export PATH="$LOCAL_BIN:$PATH"
+
+# ---------- 4a. packages: macOS (Homebrew) ----------
+load_brew_env() {
+  local b
+  for b in /opt/homebrew/bin/brew /usr/local/bin/brew /home/linuxbrew/.linuxbrew/bin/brew; do
+    [[ -x "$b" ]] && { eval "$("$b" shellenv)"; return 0; }
+  done
+  return 0
+}
+
+if [[ $SKIP_PKGS -eq 0 && $IS_MAC -eq 1 ]]; then
   step "Homebrew"
   load_brew_env
-  if ! command -v brew >/dev/null 2>&1; then
+  if ! have brew; then
     warn "沒有找到 Homebrew，開始安裝（可能會要求輸入密碼）"
     sudo -v
     NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     load_brew_env
-    command -v brew >/dev/null 2>&1 || die "Homebrew 安裝失敗。"
+    have brew || die "Homebrew 安裝失敗。"
   fi
   ok "brew $(brew --version | head -1 | awk '{print $2}')"
 
-  pkgs="starship"; command -v git >/dev/null 2>&1 || pkgs="git $pkgs"
-  for p in $SEL; do
-    d="$(brew_dep "$p")"
-    [[ -n "$d" ]] && case " $pkgs " in *" $d "*) ;; *) pkgs="$pkgs $d" ;; esac
-  done
+  pkgs="starship${tools:+ $tools}"; have git || pkgs="git $pkgs"
   step "套件：$pkgs"
   missing=""
   for pkg in $pkgs; do
     if brew list --formula "$pkg" >/dev/null 2>&1; then ok "${pkg}（已安裝）"
-    elif command -v "$pkg" >/dev/null 2>&1; then ok "${pkg}（已存在：$(command -v "$pkg")）"
+    elif have "$pkg"; then ok "${pkg}（已存在：$(command -v "$pkg")）"
     else missing="$missing $pkg"; fi
   done
   if [[ -n "$missing" ]]; then
@@ -309,13 +429,9 @@ if [[ $SKIP_BREW -eq 0 ]]; then
 
   if [[ $INSTALL_FONT -eq 1 ]]; then
     step "字型：Hack Nerd Font（含 Hack Nerd Font Mono）"
-    font_present=0
-    for f in "$HOME/Library/Fonts"/HackNerdFontMono-Regular.* /Library/Fonts/HackNerdFontMono-Regular.*; do
-      [[ -e "$f" ]] && font_present=1
-    done
     if brew list --cask font-hack-nerd-font >/dev/null 2>&1; then
       ok "font-hack-nerd-font（已安裝）"
-    elif [[ $font_present -eq 1 ]]; then
+    elif font_installed; then
       ok "Hack Nerd Font Mono（已存在）"
     else
       HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask font-hack-nerd-font && ok "font-hack-nerd-font"
@@ -323,12 +439,54 @@ if [[ $SKIP_BREW -eq 0 ]]; then
   fi
 fi
 
-command -v git >/dev/null 2>&1      || die "需要 git。"
-command -v starship >/dev/null 2>&1 || die "需要 starship。"
-for p in $SEL; do
-  d="$(brew_dep "$p")"
-  [[ -z "$d" ]] || command -v "$d" >/dev/null 2>&1 || warn "$p 需要 ${d}，但找不到這個指令，啟動時會自動略過"
-done
+# ---------- 4b. packages: Linux ----------
+if [[ $SKIP_PKGS -eq 0 && $IS_LINUX -eq 1 ]]; then
+  detect_pm
+  step "套件管理器：${PM:-（沒有偵測到）}"
+  [[ -n "$PM" ]] || die "沒有偵測到 apt / dnf / pacman / zypper。請先手動安裝 zsh、git、curl，再用 --skip-packages 執行。"
+  if [[ -n "$SUDO" ]]; then
+    sudo -v || die "需要 sudo 權限來安裝套件（或先手動安裝 zsh、git、curl，再用 --skip-packages 執行）。"
+  elif [[ $EUID -ne 0 ]]; then
+    die "沒有 sudo，無法安裝套件。請先手動安裝 zsh、git、curl，再用 --skip-packages 執行。"
+  fi
+
+  base="zsh git curl"
+  [[ $INSTALL_FONT -eq 1 ]] && base="$base unzip fontconfig"
+  [[ "$PM" == apt ]] && base="$base ca-certificates"
+  need=""
+  for pkg in $base; do
+    case "$pkg" in
+      fontconfig)      have fc-cache || need="$need $pkg" ;;
+      ca-certificates) [[ -e /etc/ssl/certs/ca-certificates.crt ]] || need="$need $pkg" ;;
+      *)               have "$pkg" || need="$need $pkg" ;;
+    esac
+  done
+  if [[ -n "$need" ]]; then
+    # shellcheck disable=SC2086
+    pm_install $need || die "安裝基本套件失敗：$need"
+  fi
+  ok "zsh git curl"
+
+  step "工具：starship${tools:+ $tools}"
+  for t in starship $tools; do
+    if [[ "$t" == fzf ]] && fzf_ok; then ok "fzf（已安裝）"; continue; fi
+    if [[ "$t" != fzf ]] && have "$t"; then ok "${t}（已安裝）"; continue; fi
+    if linux_install_tool "$t" && have "$t"; then ok "${t}（$(command -v "$t")）"
+    else warn "$t 安裝失敗，啟動時會自動略過"; fi
+  done
+
+  if [[ $INSTALL_FONT -eq 1 ]]; then
+    step "字型：Hack Nerd Font（含 Hack Nerd Font Mono）"
+    if font_installed; then ok "Hack Nerd Font Mono（已存在）"
+    elif linux_install_font; then ok "已安裝到 ~/.local/share/fonts/HackNerdFont"
+    else warn "字型下載失敗，可以之後再重跑一次"; fi
+  fi
+fi
+
+have zsh      || die "需要 zsh。"
+have git      || die "需要 git。"
+have starship || die "需要 starship。"
+for t in $tools; do have "$t" || warn "$t 找不到，相關功能啟動時會自動略過"; done
 
 # ---------- 5. config source ----------
 step "設定檔來源"
@@ -377,6 +535,14 @@ if [[ "$(readlink "$HOME/.zshrc" 2>/dev/null)" != "$ZSH_DIR/.zshrc" ]]; then
 fi
 ok "~/.zshrc → $ZSH_DIR/.zshrc"
 
+# Debian / Ubuntu run compinit from /etc/zsh/zshrc as well — skip it, ours is cached.
+if [[ -f /etc/zsh/zshrc ]] && grep -q skip_global_compinit /etc/zsh/zshrc 2>/dev/null; then
+  if ! grep -q 'skip_global_compinit=1' "$HOME/.zshenv" 2>/dev/null; then
+    printf '\n# zsh-setup: ~/.zshrc runs a cached compinit\nskip_global_compinit=1\n' >> "$HOME/.zshenv"
+    ok "~/.zshenv：skip_global_compinit=1"
+  fi
+fi
+
 # history lives in ~/.zsh/.zsh_history — bring the old ~/.zsh_history along the first time
 if [[ -s "$HOME/.zsh_history" && ! -s "$ZSH_DIR/.zsh_history" ]]; then
   cp -p "$HOME/.zsh_history" "$ZSH_DIR/.zsh_history"
@@ -398,7 +564,7 @@ cp "$tmp_toml" "$STARSHIP_TOML"; rm -f "$tmp_toml"
 ok "${STARSHIP_TOML}（時間：$(onoff "$PROMPT_TIME")，IP：$(onoff "$PROMPT_IP")）"
 
 cat > "$OPTIONS_FILE" <<EOF
-# Generated by mac-zsh-setup — re-run install.sh to change these.
+# Generated by zsh-setup — re-run install.sh to change these.
 MZS_PLUGINS=($CORE_PLUGINS $SEL)
 MZS_SUGGEST_COLOR=$SUGGEST_COLOR
 MZS_THEME=$THEME
@@ -414,15 +580,12 @@ if [[ -n "$CONDA_ROOT" && "$CONDA_MODE" != off ]]; then
   "$CONDA_ROOT/bin/conda" config --set changeps1 False >/dev/null 2>&1 && ok "conda：changeps1 = False（載入方式：${CONDA_MODE}）"
 fi
 
-# ---------- Terminal.app profile ----------
+# ---------- Terminal.app profile (macOS) ----------
 TERMINAL_DONE=0
-if [[ $TERMINAL_APP -eq 1 ]]; then
+if [[ $IS_MAC -eq 1 && $TERMINAL_APP -eq 1 ]]; then
   step "Terminal.app"
   if defaults read com.apple.Terminal "Window Settings" >/dev/null 2>&1; then
-    font="-"
-    for f in "$HOME/Library/Fonts"/HackNerdFontMono-Regular.* /Library/Fonts/HackNerdFontMono-Regular.*; do
-      [[ -e "$f" ]] && font="HackNFM-Regular"
-    done
+    font="-"; font_installed && font="HackNFM-Regular"
     mkdir -p "$BACKUP_DIR"
     defaults export com.apple.Terminal "$BACKUP_DIR/com.apple.Terminal.plist"
     if result="$(osascript -l JavaScript "$SRC_DIR/config/terminal-app.js" "$font" 2>&1)"; then
@@ -445,16 +608,25 @@ rm -f "$ZSH_CACHE"/*.zsh "$ZSH_CACHE"/zcompdump*
 ZSH_BIN="$(command -v zsh)"
 if [[ "${SHELL:-}" != */zsh ]]; then
   step "預設 shell"
-  if chsh -s "$ZSH_BIN"; then ok "預設 shell 已改成 $ZSH_BIN"; else warn "請手動執行：chsh -s $ZSH_BIN"; fi
+  ME="$(id -un)"
+  if [[ $IS_LINUX -eq 1 ]]; then
+    grep -qx "$ZSH_BIN" /etc/shells 2>/dev/null || echo "$ZSH_BIN" | $SUDO tee -a /etc/shells >/dev/null || true
+    if $SUDO chsh -s "$ZSH_BIN" "$ME" >/dev/null 2>&1 || { have usermod && $SUDO usermod -s "$ZSH_BIN" "$ME" >/dev/null 2>&1; }; then
+      ok "預設 shell 已改成 $ZSH_BIN（重新登入後生效）"
+    else
+      warn "請手動執行：chsh -s $ZSH_BIN"
+    fi
+  else
+    if chsh -s "$ZSH_BIN"; then ok "預設 shell 已改成 $ZSH_BIN"; else warn "請手動執行：chsh -s $ZSH_BIN"; fi
+  fi
 fi
 
 # ---------- 9. warm cache & measure ----------
 step "建立快取並測量啟動時間"
-zsh -i -c exit >/dev/null 2>&1 || true
-start_ms() { perl -MTime::HiRes=time -e 'printf "%d", time*1000'; }
+zsh -i -c exit >/dev/null 2>&1 </dev/null || true
 best=999999
 for _ in 1 2 3; do
-  t0=$(start_ms); zsh -i -c exit >/dev/null 2>&1 || true; t1=$(start_ms)
+  t0=$(now_ms); zsh -i -c exit >/dev/null 2>&1 </dev/null || true; t1=$(now_ms)
   (( t1 - t0 < best )) && best=$((t1 - t0))
 done
 ok "zsh 啟動時間：約 ${best} ms"
@@ -467,13 +639,21 @@ if [[ $TERMINAL_DONE -eq 1 ]]; then
   printf '    1. %s完全結束 Terminal.app（⌘Q）再重新打開%s，Home/End 和字型才會生效\n' "$C_YELLOW" "$C_RESET"
   printf '       %s用 iTerm2 / VS Code 的話，字型請手動改成 Hack Nerd Font Mono%s\n' "$C_DIM" "$C_RESET"
 else
-  cat <<EOF
-    1. 把終端機字型改成 ${C_YELLOW}Hack Nerd Font Mono${C_RESET}
-       ${C_DIM}Terminal.app → 設定 → 描述檔 → 文字 → 字體
-       iTerm2       → Settings → Profiles → Text → Font
-       VS Code      → "terminal.integrated.fontFamily": "Hack Nerd Font Mono"${C_RESET}
-    2. 重開終端機，或執行：${C_YELLOW}exec zsh${C_RESET}
-EOF
+  printf '    1. 把終端機字型改成 %sHack Nerd Font Mono%s\n' "$C_YELLOW" "$C_RESET"
+  if [[ $IS_WSL -eq 1 ]]; then
+    printf '       %sWSL：字型要裝在 Windows 端 — 在 PowerShell 執行 install.ps1，或手動安裝後在 Windows Terminal 選用%s\n' "$C_DIM" "$C_RESET"
+  elif [[ $IS_LINUX -eq 1 ]]; then
+    printf '       %sGNOME Terminal / Konsole / VS Code 等：在設定裡把字型改成 Hack Nerd Font Mono\n' "$C_DIM"
+    printf '       透過 SSH 連線時，字型要裝在你打字的那台電腦%s\n' "$C_RESET"
+  else
+    printf '       %sTerminal.app → 設定 → 描述檔 → 文字 → 字體（或用 --terminal-app=on 自動設定）\n' "$C_DIM"
+    printf '       iTerm2 → Settings → Profiles → Text → Font · VS Code → terminal.integrated.fontFamily%s\n' "$C_RESET"
+  fi
+fi
+if [[ "${SHELL:-}" == */zsh ]]; then
+  printf '    2. 重開終端機，或執行：%sexec zsh%s\n' "$C_YELLOW" "$C_RESET"
+else
+  printf '    2. 重新登入（預設 shell 已改成 zsh），或現在先執行：%szsh%s\n' "$C_YELLOW" "$C_RESET"
 fi
 echo "    之後想改選項，重新執行安裝指令即可（會記住這次的選擇）"
 if [[ -d "$BACKUP_DIR" ]]; then printf '\n  %s舊檔案已備份到 %s%s\n' "$C_DIM" "$BACKUP_DIR" "$C_RESET"; fi
