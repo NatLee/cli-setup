@@ -298,7 +298,9 @@ if [[ $SKIP_BREW -eq 0 ]]; then
   step "套件：$pkgs"
   missing=""
   for pkg in $pkgs; do
-    if brew list --formula "$pkg" >/dev/null 2>&1; then ok "${pkg}（已安裝）"; else missing="$missing $pkg"; fi
+    if brew list --formula "$pkg" >/dev/null 2>&1; then ok "${pkg}（已安裝）"
+    elif command -v "$pkg" >/dev/null 2>&1; then ok "${pkg}（已存在：$(command -v "$pkg")）"
+    else missing="$missing $pkg"; fi
   done
   if [[ -n "$missing" ]]; then
     # shellcheck disable=SC2086
@@ -307,8 +309,14 @@ if [[ $SKIP_BREW -eq 0 ]]; then
 
   if [[ $INSTALL_FONT -eq 1 ]]; then
     step "字型：Hack Nerd Font（含 Hack Nerd Font Mono）"
+    font_present=0
+    for f in "$HOME/Library/Fonts"/HackNerdFontMono-Regular.* /Library/Fonts/HackNerdFontMono-Regular.*; do
+      [[ -e "$f" ]] && font_present=1
+    done
     if brew list --cask font-hack-nerd-font >/dev/null 2>&1; then
       ok "font-hack-nerd-font（已安裝）"
+    elif [[ $font_present -eq 1 ]]; then
+      ok "Hack Nerd Font Mono（已存在）"
     else
       HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask font-hack-nerd-font && ok "font-hack-nerd-font"
     fi
@@ -368,6 +376,12 @@ if [[ "$(readlink "$HOME/.zshrc" 2>/dev/null)" != "$ZSH_DIR/.zshrc" ]]; then
   ln -s "$ZSH_DIR/.zshrc" "$HOME/.zshrc"
 fi
 ok "~/.zshrc → $ZSH_DIR/.zshrc"
+
+# history lives in ~/.zsh/.zsh_history — bring the old ~/.zsh_history along the first time
+if [[ -s "$HOME/.zsh_history" && ! -s "$ZSH_DIR/.zsh_history" ]]; then
+  cp -p "$HOME/.zsh_history" "$ZSH_DIR/.zsh_history"
+  ok "歷史紀錄：已從 ~/.zsh_history 複製 $(wc -l < "$ZSH_DIR/.zsh_history" | tr -d ' ') 行"
+fi
 
 cp "$SRC_DIR"/config/themes/*.zsh "$ZSH_DIR/themes/"
 ok "語法高亮主題：$THEME"
