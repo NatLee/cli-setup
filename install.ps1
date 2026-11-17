@@ -22,19 +22,21 @@
     -ReplaceProfile          把原本的 PowerShell 設定檔移到旁邊的備份資料夾，由 cli-setup 接管
     -SkipPackages            不安裝任何套件 / 模組
 #>
+# No [ValidateSet] here: `irm | iex` runs this param() block in the caller's scope, where an empty
+# default would fail validation. Values are checked inside Invoke-ZsSetup instead.
 [CmdletBinding()]
 param(
   [switch]$Yes,
   [string]$Plugins,
   [string]$SuggestColor,
-  [ValidateSet('soft', 'minimal', 'default')][string]$Theme,
-  [ValidateSet('on', 'off')][string]$Time,
-  [ValidateSet('on', 'off')][string]$Ip,
-  [ValidateSet('defer', 'fast', 'lazy', 'full', 'off')][string]$Conda,
-  [ValidateSet('Emacs', 'Windows')][string]$EditMode,
-  [ValidateSet('on', 'off')][string]$Font,
-  [ValidateSet('on', 'off')][string]$WindowsTerminal,
-  [ValidateSet('on', 'off')][string]$WindowsPowerShell,
+  [string]$Theme,
+  [string]$Time,
+  [string]$Ip,
+  [string]$Conda,
+  [string]$EditMode,
+  [string]$Font,
+  [string]$WindowsTerminal,
+  [string]$WindowsPowerShell,
   [switch]$ReplaceProfile,
   [switch]$SkipPackages
 )
@@ -143,6 +145,9 @@ function Invoke-ZsSetup {
     Fail '這是 Windows 版本。macOS / Linux / WSL 請改用 install.sh（見 README）。'
   }
   try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
+  # Under Restricted / AllSigned even built-in script modules (Expand-Archive) and our options.ps1 are blocked.
+  # Allow scripts for this PowerShell window only -- nothing is changed for the system or other windows.
+  try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction Stop } catch { }
   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
   $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -163,6 +168,14 @@ function Invoke-ZsSetup {
   foreach ($p in $ZS.Plugins) { if ($Optional -contains $p) { $sel.Add($p) } }
 
   # ---------- 2. parameters ----------
+  $allowed = @{
+    Theme = 'soft', 'minimal', 'default'; Time = 'on', 'off'; Ip = 'on', 'off'; Conda = 'defer', 'fast', 'lazy', 'full', 'off'
+    EditMode = 'Emacs', 'Windows'; Font = 'on', 'off'; WindowsTerminal = 'on', 'off'; WindowsPowerShell = 'on', 'off'
+  }
+  foreach ($name in $allowed.Keys) {
+    $v = Get-Variable -Name $name -ValueOnly -ErrorAction SilentlyContinue
+    if ($v -and $allowed[$name] -notcontains $v) { Fail "-$name 只能是：$($allowed[$name] -join ' / ')" }
+  }
   if ($Plugins) {
     $sel.Clear()
     switch ($Plugins) {
@@ -554,3 +567,4 @@ Remove-Variable __zs -ErrorAction SilentlyContinue
 }
 
 Invoke-ZsSetup
+Remove-Item Function:\Invoke-ZsSetup -ErrorAction SilentlyContinue   # `irm | iex` runs in your session; don't leave it behind
