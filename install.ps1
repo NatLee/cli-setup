@@ -14,9 +14,12 @@
     -Theme NAME              語法高亮主題：soft | minimal | default
     -Time on|off             Prompt 右側顯示時間
     -Ip on|off               Prompt 右側顯示本機 IP
-    -Conda MODE              conda 載入方式：fast | lazy | full | off
+    -Conda MODE              conda 載入方式：defer | fast | lazy | full | off
+    -EditMode Emacs|Windows  PSReadLine 編輯模式（Emacs = 和 zsh 一樣的按鍵）
     -Font on|off             安裝 Hack Nerd Font（裝在目前使用者，不需要系統管理員）
     -WindowsTerminal on|off  把 Windows Terminal 的預設字型改成 Hack Nerd Font Mono
+    -WindowsPowerShell on|off  Windows PowerShell 5.1 也套用（有 PowerShell 7 時預設 off）
+    -ReplaceProfile          把原本的 PowerShell 設定檔移到旁邊的備份資料夾，由 cli-setup 接管
     -SkipPackages            不安裝任何套件 / 模組
 #>
 [CmdletBinding()]
@@ -27,9 +30,12 @@ param(
   [ValidateSet('soft', 'minimal', 'default')][string]$Theme,
   [ValidateSet('on', 'off')][string]$Time,
   [ValidateSet('on', 'off')][string]$Ip,
-  [ValidateSet('fast', 'lazy', 'full', 'off')][string]$Conda,
+  [ValidateSet('defer', 'fast', 'lazy', 'full', 'off')][string]$Conda,
+  [ValidateSet('Emacs', 'Windows')][string]$EditMode,
   [ValidateSet('on', 'off')][string]$Font,
   [ValidateSet('on', 'off')][string]$WindowsTerminal,
+  [ValidateSet('on', 'off')][string]$WindowsPowerShell,
+  [switch]$ReplaceProfile,
   [switch]$SkipPackages
 )
 
@@ -93,9 +99,26 @@ function Invoke-ZsSetup {
     (Test-Path "$env:WINDIR\Fonts\HackNerdFontMono-Regular.ttf")
   }
   function Find-Conda {
-    $roots = "$HOME\miniconda3", "$HOME\anaconda3", "$HOME\miniforge3", "$HOME\mambaforge",
-             "$env:LOCALAPPDATA\miniconda3", "$env:LOCALAPPDATA\anaconda3", "$env:ProgramData\miniconda3", "$env:ProgramData\anaconda3"
-    $roots | Where-Object { Test-Path (Join-Path $_ 'Scripts\conda.exe') } | Select-Object -First 1
+    $roots = @()
+    if ($env:CONDA_EXE) { $roots += Split-Path (Split-Path $env:CONDA_EXE) }
+    foreach ($parent in $env:USERPROFILE, $env:LOCALAPPDATA, $env:ProgramData, $env:ProgramFiles) {
+      if ($parent) { foreach ($n in 'miniconda3', 'anaconda3', 'miniforge3', 'mambaforge') { $roots += Join-Path $parent $n } }
+    }
+    $roots | Where-Object { $_ -and (Test-Path (Join-Path $_ 'Scripts\conda.exe')) } | Select-Object -First 1
+  }
+  function Get-ProfilePath([string]$exe, [string]$which) {
+    if (-not $exe -or -not (Test-Path $exe)) { return }
+    $r = & $exe -NoLogo -NoProfile -NonInteractive -Command "`$PROFILE.$which" 2>$null | Select-Object -Last 1
+    if ($r) { $r.Trim() }
+  }
+  # Effective policy for an edition, ignoring the Process scope this installer may have been started with.
+  function Get-EffectivePolicy([string]$exe, [bool]$core) {
+    $list = & $exe -NoLogo -NoProfile -NonInteractive -Command 'Get-ExecutionPolicy -List | ForEach-Object { "{0}={1}" -f $_.Scope, $_.ExecutionPolicy }' 2>$null
+    $map = @{}; foreach ($l in $list) { $k, $v = $l -split '=', 2; $map[$k] = $v }
+    foreach ($scope in 'MachinePolicy', 'UserPolicy', 'CurrentUser', 'LocalMachine') {
+      if ($map[$scope] -and $map[$scope] -ne 'Undefined') { return @{ Policy = $map[$scope]; Scope = $scope } }
+    }
+    @{ Policy = $(if ($core) { 'RemoteSigned' } else { 'Restricted' }); Scope = 'Default' }
   }
   function Set-TomlDisabled([string]$text, [string]$section, [bool]$disabled) {
     $out = New-Object System.Collections.Generic.List[string]
@@ -115,10 +138,13 @@ function Invoke-ZsSetup {
   try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
+  $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue | Select-Object -First 1
+  $ps5 = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+
   # ---------- 1. defaults + previous choices ----------
   $ZS = @{
-    Plugins = $DefaultSel; SuggestColor = 244; Theme = 'soft'; Conda = 'fast'
-    PromptTime = $true; PromptIp = $true; Font = $true; WindowsTerminal = $true; Offered = $null
+    Plugins = $DefaultSel; SuggestColor = 244; Theme = 'soft'; Conda = 'defer'; EditMode = 'Emacs'
+    PromptTime = $true; PromptIp = $true; Font = $true; WindowsTerminal = $true; WindowsPowerShell = $null; Offered = $null
   }
   $optFile = Join-Path $ZsDir 'options.ps1'
   if (Test-Path $optFile) {
@@ -158,6 +184,10 @@ function Invoke-ZsSetup {
   if ($Ip)              { $ZS.PromptIp = ($Ip -eq 'on') }
   if ($Font)            { $ZS.Font = ($Font -eq 'on') }
   if ($WindowsTerminal) { $ZS.WindowsTerminal = ($WindowsTerminal -eq 'on') }
+  if ($EditMode)        { $ZS.EditMode = $EditMode }
+  if ($WindowsPowerShell) { $ZS.WindowsPowerShell = ($WindowsPowerShell -eq 'on') }
+  if ($null -eq $ZS.WindowsPowerShell) { $ZS.WindowsPowerShell = -not $pwsh }   # 5.1 only when there is no PowerShell 7
+  if (-not $pwsh) { $ZS.WindowsPowerShell = $true }
 
   $edition = "PowerShell $($PSVersionTable.PSVersion)"
   Write-Host ''
@@ -166,7 +196,6 @@ function Invoke-ZsSetup {
 
   # ---------- 3. interactive menu ----------
   $condaRoot = Find-Conda
-  $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue | Select-Object -First 1
   $interactive = (-not $Yes) -and [Environment]::UserInteractive -and ($Host.Name -eq 'ConsoleHost')
   if ($interactive) {
     while ($true) {
@@ -195,7 +224,9 @@ function Invoke-ZsSetup {
       Write-Host ("  10 Prompt IP       {0}" -f (OnOff $ZS.PromptIp))
       Write-Host ''; Write-Host '  其他'
       if ($condaRoot) {
-        $cdesc = switch ($ZS.Conda) { 'fast' { '快取 hook（推薦）' } 'lazy' { '第一次打 conda 才載入，最快' } 'full' { '官方 conda init 行為（最慢）' } 'off' { '不載入 conda' } }
+        $cdesc = switch ($ZS.Conda) {
+          'defer' { '背景啟用 base，提示字元立刻出現（推薦）' } 'fast' { '立刻啟用 base（啟動會等 conda）' }
+          'lazy' { '第一次打 conda 才載入，base 不會自動啟用' } 'full' { '官方 conda init 行為（最慢）' } 'off' { '不載入 conda' } }
         Write-Host ("  11 Conda 載入方式  {0,-12} " -f $ZS.Conda) -NoNewline; Write-Host $cdesc -ForegroundColor DarkGray
       } else {
         Write-Host '  11 Conda 載入方式  （沒有偵測到 conda）' -ForegroundColor DarkGray
@@ -203,6 +234,12 @@ function Invoke-ZsSetup {
       Write-Host ("  12 安裝 Hack Nerd Font      {0}" -f (OnOff $ZS.Font))
       Write-Host ("  13 設定 Windows Terminal    {0}  " -f (OnOff $ZS.WindowsTerminal)) -NoNewline
       Write-Host '預設字型換成 Hack Nerd Font Mono' -ForegroundColor DarkGray
+      Write-Host ("  14 編輯模式               {0,-8} " -f $ZS.EditMode) -NoNewline
+      Write-Host $(if ($ZS.EditMode -eq 'Emacs') { 'Ctrl-A / Ctrl-E 等，和 zsh 一樣' } else { 'Windows 傳統按鍵' }) -ForegroundColor DarkGray
+      if ($pwsh) {
+        Write-Host ("  15 Windows PowerShell 5.1   {0}  " -f (OnOff $ZS.WindowsPowerShell)) -NoNewline
+        Write-Host '也套用到舊版 powershell.exe（會調整執行原則）' -ForegroundColor DarkGray
+      }
       Write-Host ''
       Write-Host '  ★ 推薦' -ForegroundColor Yellow -NoNewline
       Write-Host '  輸入編號切換（可一次多個，例如 1 7 8），直接 Enter 開始安裝，q 離開'
@@ -216,9 +253,11 @@ function Invoke-ZsSetup {
           '^8$'  { $ZS.Theme = switch ($ZS.Theme) { 'soft' { 'minimal' } 'minimal' { 'default' } default { 'soft' } } }
           '^9$'  { $ZS.PromptTime = -not $ZS.PromptTime }
           '^10$' { $ZS.PromptIp = -not $ZS.PromptIp }
-          '^11$' { if ($condaRoot) { $ZS.Conda = switch ($ZS.Conda) { 'fast' { 'lazy' } 'lazy' { 'full' } 'full' { 'off' } default { 'fast' } } } }
+          '^11$' { if ($condaRoot) { $ZS.Conda = switch ($ZS.Conda) { 'defer' { 'fast' } 'fast' { 'lazy' } 'lazy' { 'full' } 'full' { 'off' } default { 'defer' } } } }
           '^12$' { $ZS.Font = -not $ZS.Font }
           '^13$' { $ZS.WindowsTerminal = -not $ZS.WindowsTerminal }
+          '^14$' { $ZS.EditMode = if ($ZS.EditMode -eq 'Emacs') { 'Windows' } else { 'Emacs' } }
+          '^15$' { if ($pwsh) { $ZS.WindowsPowerShell = -not $ZS.WindowsPowerShell } }
           default { Warn "沒有這個選項：$n" }
         }
       }
@@ -226,6 +265,10 @@ function Invoke-ZsSetup {
     }
   }
   $sel = @($Optional | Where-Object { $sel.Contains($_) })   # stable order
+
+  $targets = @()
+  if ($pwsh) { $targets += [pscustomobject]@{ Name = 'PowerShell 7'; Exe = $pwsh.Source; Core = $true; Folder = 'PowerShell' } }
+  if ($ZS.WindowsPowerShell -and (Test-Path $ps5)) { $targets += [pscustomobject]@{ Name = 'Windows PowerShell 5.1'; Exe = $ps5; Core = $false; Folder = 'WindowsPowerShell' } }
 
   # ---------- 4. packages ----------
   $tools = @('starship')
@@ -250,10 +293,10 @@ function Invoke-ZsSetup {
         }
       } catch { }
       Update-SessionPath
-      if (Have $t) { Ok "$t（已安裝）" } else { Warn "$t 安裝失敗，相關功能啟動時會自動略過" }
+      if (Have $t) { Ok "$t（安裝完成）" } else { Warn "$t 安裝失敗，相關功能啟動時會自動略過" }
     }
 
-    # PowerShell modules, for both Windows PowerShell 5.1 and PowerShell 7 if present
+    # PowerShell modules, for each edition cli-setup is applied to
     $modules = @('PSReadLine')
     if ($tools -contains 'fzf') { $modules += 'PSFzf' }
     Step "PowerShell 模組：$($modules -join ' ')"
@@ -273,15 +316,10 @@ foreach ($m in $args) {
   }
 }
 '@
-    $editions = @()
-    $ps5 = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    if (Test-Path $ps5) { $editions += $ps5 }
-    if ($pwsh) { $editions += $pwsh.Source }
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("& { $installCmd } $($modules -join ' ')"))
-    foreach ($exe in $editions) {
-      $name = if ($exe -like '*pwsh*') { 'PowerShell 7' } else { 'Windows PowerShell 5.1' }
-      & $exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded 2>&1 | Out-Null
-      if ($LASTEXITCODE -eq 0) { Ok "$name：$($modules -join ', ')" } else { Warn "$name：模組安裝失敗（之後可重跑）" }
+    foreach ($t in $targets) {
+      & $t.Exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded 2>&1 | Out-Null
+      if ($LASTEXITCODE -eq 0) { Ok "$($t.Name)：$($modules -join ', ')" } else { Warn "$($t.Name)：模組安裝失敗（之後可重跑）" }
     }
 
     # Font (per user, no admin needed)
@@ -330,7 +368,7 @@ foreach ($m in $args) {
   Step '寫入設定'
   New-Item -ItemType Directory -Force -Path $ZsDir, (Split-Path $StarshipToml), $ZsCache | Out-Null
 
-  foreach ($f in 'profile.ps1', 'aliases.ps1') {
+  foreach ($f in 'profile.ps1', 'aliases.ps1', 'conda-defer.ps1') {
     $new = Read-Text (Join-Path $src "config\windows\$f")
     Backup-Item (Join-Path $ZsDir $f) $new
     Write-Text (Join-Path $ZsDir $f) $new
@@ -352,6 +390,8 @@ foreach ($m in $args) {
 `$ZS.SuggestColor    = $($ZS.SuggestColor)
 `$ZS.Theme           = '$($ZS.Theme)'
 `$ZS.Conda           = '$($ZS.Conda)'
+`$ZS.EditMode        = '$($ZS.EditMode)'
+`$ZS.WindowsPowerShell = `$$($ZS.WindowsPowerShell.ToString().ToLower())
 `$ZS.PromptTime      = `$$($ZS.PromptTime.ToString().ToLower())
 `$ZS.PromptIp        = `$$($ZS.PromptIp.ToString().ToLower())
 `$ZS.Font            = `$$($ZS.Font.ToString().ToLower())
@@ -366,53 +406,76 @@ foreach ($m in $args) {
     Ok "conda：changeps1 = False（載入方式：$($ZS.Conda)）"
   }
 
-  # ---------- 7. hook into $PROFILE (Windows PowerShell 5.1 and PowerShell 7) ----------
+  # ---------- 7. hook into $PROFILE ----------
   Step 'PowerShell 設定檔'
   $docs = [Environment]::GetFolderPath('MyDocuments')
+  $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+  # The block is tiny on purpose: Documents may be synced to other PCs, where it just prints a hint.
   $hook = @'
 # >>> cli-setup >>>
 $__zs = Join-Path $HOME '.config\cli-setup\profile.ps1'
 if (Test-Path $__zs) { . $__zs }
+elseif ($Host.Name -eq 'ConsoleHost') { Write-Host 'cli-setup is not installed on this PC: irm https://raw.githubusercontent.com/NatLee/cli-setup/main/install.ps1 | iex' -ForegroundColor DarkGray }
 Remove-Variable __zs -ErrorAction SilentlyContinue
 # <<< cli-setup <<<
 '@
-  # Ask each installed edition where its CurrentUserAllHosts profile lives (handles OneDrive / redirected
-  # Documents); fall back to the usual Documents paths.
-  $profiles = @()
-  $ps5 = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  foreach ($pair in @(@($ps5, 'WindowsPowerShell'), @($(if ($pwsh) { $pwsh.Source }), 'PowerShell'))) {
-    $exe, $folder = $pair
-    $path = $null
-    if ($exe -and (Test-Path $exe)) {
-      $path = (& $exe -NoLogo -NoProfile -NonInteractive -Command '$PROFILE.CurrentUserAllHosts' 2>$null | Select-Object -Last 1)
-    }
-    if (-not $path) { $path = Join-Path (Join-Path $docs $folder) 'profile.ps1' }
-    $profiles += $path.Trim()
-  }
-  foreach ($prof in ($profiles | Select-Object -Unique)) {
+  foreach ($t in $targets) {
+    # Ask the edition itself (handles OneDrive / Synology / other redirected Documents)
+    $prof = Get-ProfilePath $t.Exe 'CurrentUserAllHosts'
+    if (-not $prof) { $prof = Join-Path (Join-Path $docs $t.Folder) 'profile.ps1' }
     $dir = Split-Path $prof
+    $hostProf = Get-ProfilePath $t.Exe 'CurrentUserCurrentHost'
+    if (-not $hostProf) { $hostProf = Join-Path $dir 'Microsoft.PowerShell_profile.ps1' }
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
+
+    if ($ReplaceProfile) {
+      # Keep the old files next to the profile (so a synced folder doesn't lose them), then start clean.
+      $old = @($prof, $hostProf) | Where-Object { (Test-Path $_) -and ((Read-Text $_) -notmatch '^\s*# >>> cli-setup >>>[\s\S]*# <<< cli-setup <<<\s*$') }
+      if ($old) {
+        $keep = Join-Path $dir "backup-before-cli-setup-$stamp"
+        New-Item -ItemType Directory -Force -Path $keep | Out-Null
+        foreach ($o in $old) { Move-Item $o $keep -Force }
+        Warn "$($t.Name)：原本的設定檔已移到 $keep"
+      }
+    }
     $cur = if (Test-Path $prof) { Read-Text $prof } else { '' }
     if ($cur -notmatch '>>> cli-setup >>>') {
       Backup-Item $prof $null
       Write-Text $prof (($cur.TrimEnd() + "`r`n`r`n" + $hook).TrimStart() + "`r`n")
     }
-    Ok $prof
-    foreach ($other in (Join-Path $dir 'Microsoft.PowerShell_profile.ps1'), $prof) {
-      if ((Test-Path $other) -and ((Read-Text $other) -match '(?m)^[^#]*(starship init|oh-my-posh)')) {
-        Warn "$other 裡已經有 starship / oh-my-posh 的初始化，可能會和這裡的設定重複，建議移除那一行"
+    Ok "$($t.Name)：$prof"
+    foreach ($other in $hostProf, $prof) {
+      if ((Test-Path $other) -and ((Read-Text $other) -match '(?m)^[^#]*(starship init|oh-my-posh|Set-PSReadLineOption|conda.*hook)')) {
+        Warn "$other 裡已經有 starship / PSReadLine / conda 的設定，可能會蓋掉 cli-setup（可用 -ReplaceProfile 讓 cli-setup 接管）"
+      }
+    }
+
+    # execution policy: profiles can't load under Restricted / AllSigned
+    $pol = Get-EffectivePolicy $t.Exe $t.Core
+    if ($pol.Policy -in 'Restricted', 'AllSigned') {
+      if ($pol.Scope -in 'MachinePolicy', 'UserPolicy') { Warn "$($t.Name)：執行原則由群組原則設為 $($pol.Policy)，設定檔不會載入" }
+      else {
+        try {
+          & $t.Exe -NoLogo -NoProfile -NonInteractive -Command 'Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force' 2>&1 | Out-Null
+          Ok "$($t.Name)：執行原則 $($pol.Policy) → RemoteSigned（目前使用者）"
+        } catch { Warn "$($t.Name)：無法調整執行原則：$($_.Exception.Message)" }
       }
     }
   }
 
-  # execution policy: profiles can't load under "Restricted"
-  try {
-    $policy = Get-ExecutionPolicy
-    if ($policy -in 'Restricted', 'AllSigned', 'Undefined') {
-      Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
-      Ok "執行原則：$policy → RemoteSigned（目前使用者）"
-    }
-  } catch { Warn "無法調整執行原則：$($_.Exception.Message)" }
+  # PowerShell 7's update notification is noisy (and crashes on some localized consoles)
+  if ($pwsh -and -not [Environment]::GetEnvironmentVariable('POWERSHELL_UPDATECHECK', 'User')) {
+    [Environment]::SetEnvironmentVariable('POWERSHELL_UPDATECHECK', 'Off', 'User')
+    Ok 'POWERSHELL_UPDATECHECK = Off（目前使用者）'
+  }
+
+  # Local launcher: works even when the synced Documents folder (and so $PROFILE) is unavailable
+  $launcherDir = Join-Path $env:LOCALAPPDATA 'cli-setup'
+  New-Item -ItemType Directory -Force -Path $launcherDir | Out-Null
+  $shellExe = if ($pwsh) { 'pwsh.exe' } else { 'powershell.exe' }
+  $launcher = "@echo off`r`nchcp 65001 >nul`r`n$shellExe -NoLogo -NoProfile -NoExit -Command "". '%USERPROFILE%\.config\cli-setup\profile.ps1'""`r`n"
+  Write-Text (Join-Path $launcherDir 'Start-PowerShell-Local.cmd') $launcher $false
+  Ok "備援啟動器：$launcherDir\Start-PowerShell-Local.cmd"
 
   # ---------- 8. Windows Terminal ----------
   $wtDone = $false
@@ -435,6 +498,9 @@ Remove-Variable __zs -ErrorAction SilentlyContinue
           $json.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([pscustomobject]@{})
         }
         $d = $json.profiles.defaults
+        if ($d.PSObject.Properties['font'] -and $d.font.PSObject.Properties['face'] -and $d.font.face -eq 'Hack Nerd Font Mono') {
+          Ok "${wt}：預設字型已經是 Hack Nerd Font Mono"; $wtDone = $true; continue
+        }
         if (-not $d.PSObject.Properties['font']) { $d | Add-Member -NotePropertyName font -NotePropertyValue ([pscustomobject]@{}) }
         if ($d.font.PSObject.Properties['face']) { $d.font.face = 'Hack Nerd Font Mono' }
         else { $d.font | Add-Member -NotePropertyName face -NotePropertyValue 'Hack Nerd Font Mono' }
@@ -450,15 +516,12 @@ Remove-Variable __zs -ErrorAction SilentlyContinue
   # ---------- 9. warm cache & measure ----------
   Get-ChildItem $ZsCache -Filter '*.ps1' -ErrorAction SilentlyContinue | Remove-Item -Force
   Step '建立快取並測量啟動時間'
-  $shell = if ($pwsh) { $pwsh.Source } else { (Get-Process -Id $PID).Path }
-  & $shell -NoLogo -Command 'exit' 2>&1 | Out-Null
-  $best = [int]::MaxValue
-  foreach ($i in 1..3) {
-    $base = (Measure-Command { & $shell -NoLogo -NoProfile -Command 'exit' 2>&1 | Out-Null }).TotalMilliseconds
-    $full = (Measure-Command { & $shell -NoLogo -Command 'exit' 2>&1 | Out-Null }).TotalMilliseconds
-    $best = [math]::Min($best, [int]($full - $base))
-  }
-  Ok ("設定檔載入時間：約 {0} ms（{1}）" -f [math]::Max($best, 0), (Split-Path $shell -Leaf))
+  $shell = $targets[0].Exe
+  # PSReadLine is already loaded by the console before profiles run, so don't count it
+  $measure = "Import-Module PSReadLine -ErrorAction SilentlyContinue; `$env:CLI_SETUP_INTERACTIVE = '1'; `$sw = [Diagnostics.Stopwatch]::StartNew(); . '$ZsDir\profile.ps1' *> `$null; `$sw.ElapsedMilliseconds"
+  $times = foreach ($i in 1..4) { & $shell -NoLogo -NoProfile -NonInteractive -Command $measure 2>$null | Select-Object -Last 1 }
+  $best = ($times | Select-Object -Skip 1 | ForEach-Object { [int]$_ } | Measure-Object -Minimum).Minimum
+  Ok ("設定檔載入時間：約 {0} ms（{1}，不含 PowerShell 本身的啟動）" -f $best, $targets[0].Name)
 
   # ---------- done ----------
   Write-Host ''
@@ -471,6 +534,7 @@ Remove-Variable __zs -ErrorAction SilentlyContinue
   else { Write-Host '    1. 把終端機字型改成 Hack Nerd Font Mono（Windows Terminal → 設定 → 預設值 → 外觀 → 字體）' }
   Write-Host '       VS Code："terminal.integrated.fontFamily": "Hack Nerd Font Mono"' -ForegroundColor DarkGray
   if (-not $pwsh) { Write-Host '    2. 建議安裝 PowerShell 7（winget install Microsoft.PowerShell），啟動更快、功能更完整' }
+  Write-Host "    同步資料夾暫時讀不到時：Win+R 輸入 %LOCALAPPDATA%\cli-setup\Start-PowerShell-Local.cmd" -ForegroundColor DarkGray
   Write-Host '    之後想改選項，重新執行安裝指令即可（會記住這次的選擇）'
   if (Test-Path $BackupDir) { Write-Host "  舊檔案已備份到 $BackupDir" -ForegroundColor DarkGray }
   Write-Host ''

@@ -60,7 +60,7 @@ irm https://raw.githubusercontent.com/NatLee/cli-setup/main/install.ps1 | iex
 | Arch Linux | pacman | Arch（rolling） |
 | openSUSE | zypper | Tumbleweed |
 | WSL | 同 Linux | — |
-| Windows 10 / 11 | winget（或 Scoop）+ PowerShell Gallery | PowerShell 7 的設定邏輯（在 Linux 上的 pwsh 測試）；Windows 本機尚未實測 |
+| Windows 10 / 11 | winget（或 Scoop）+ PowerShell Gallery | Windows 11（PowerShell 7.6，文件資料夾導向 Synology Drive）實機 |
 
 Linux 上如果套件管理器沒有某個工具，或版本太舊（例如 Ubuntu 22.04 的 fzf 不支援 `fzf --zsh`），會自動改從官方來源安裝到 `~/.local/bin`，不會動到系統。
 
@@ -82,7 +82,9 @@ Linux 上如果套件管理器沒有某個工具，或版本太舊（例如 Ubun
 | 提醒你有 alias 可用 | [zsh-you-should-use](https://github.com/MichaelAquilina/zsh-you-should-use) | — |
 | Prompt | [Starship](https://starship.rs)（同一份 `starship.toml`） | Starship |
 | 字型 | [Hack Nerd Font](https://www.nerdfonts.com) | Hack Nerd Font（裝在目前使用者，不需要系統管理員） |
+| Conda | fast：不啟動 Python 直接啟用 base | defer：背景啟用 base，提示字元立刻出現 |
 | 終端機自動設定 | Terminal.app：Home/End + 字型 | Windows Terminal：字型 |
+| 編輯按鍵 | Emacs（`bindkey -e`） | Emacs（可改成 Windows） |
 
 ★ 為預設開啟。
 
@@ -131,7 +133,8 @@ Windows 版會移除 PowerShell 內建、名稱衝突的 `gc`（Get-Content）�
 | 一般的 `conda init` + 外掛（macOS） | ~280 ms |
 | **cli-setup（macOS）** | **~40 ms** |
 | **cli-setup（Linux）** | **~20 ms** |
-| **cli-setup（PowerShell 設定檔，快取後）** | **~20 ms**（不含 PowerShell 本身的啟動時間） |
+| 原本的 PowerShell 可攜設定（Windows 11 實機） | ~1.4 s |
+| **cli-setup（PowerShell 7 設定檔）** | **~0.3 s**（不含 PowerShell 本身的啟動時間） |
 
 變快的原因：
 
@@ -144,10 +147,13 @@ Windows 版會移除 PowerShell 內建、名稱衝突的 `gc`（Get-Content）�
 
 | Conda 模式 | 說明 |
 | --- | --- |
-| `fast`（預設） | 快取 hook 並直接啟用 base |
+| `defer`（Windows 預設） | 提示字元立刻出現，base 在背景準備好、命令列空閒時才套用（約 1 秒內）。期間自己打 `conda` 或改了環境變數會自動取消；`$CondaBaseStartup.Status` 可查看狀態。腳本與 `pwsh -Command` 仍會同步啟用 base |
+| `fast`（macOS / Linux 預設） | zsh：不啟動 Python 直接啟用 base；PowerShell：直接載入 Conda 模組並立刻啟用 base |
 | `lazy` | 第一次打 `conda` 時才載入，最快，但開新終端機時 base 不會自動啟用 |
 | `full` | 官方 `conda init` 的行為 |
 | `off` | 不載入 conda |
+
+PowerShell 版其他加速：PSFzf（約 200 ms）改成第一次按 Ctrl-R / Ctrl-T / Alt-C / Tab 時才載入；Conda 直接載入 `Conda.psm1`，不必先執行一次 `conda.exe` 產生 hook；腳本與 `-Command` 啟動時跳過提示字元與按鍵設定。
 
 ## 🔤 字型
 
@@ -194,7 +200,11 @@ Windows 版會移除 PowerShell 內建、名稱衝突的 `gc`（Get-Content）�
 | --- | --- |
 | `-Yes` | 不顯示選單 |
 | `-Plugins a,b,c` | `fzf-tab` `history-substring-search` `zoxide` `fzf` `eza` `aliases`；`none` / `all` |
-| `-SuggestColor` · `-Theme` · `-Conda` | 同上 |
+| `-SuggestColor` · `-Theme` | 同上 |
+| `-Conda` | `defer`（預設）/ `fast` / `lazy` / `full` / `off` |
+| `-EditMode Emacs\|Windows` | PSReadLine 編輯模式，預設 Emacs（和 zsh 一樣的按鍵） |
+| `-WindowsPowerShell on\|off` | Windows PowerShell 5.1 是否也套用（有 PowerShell 7 時預設 off；開啟時才會調整 5.1 的執行原則） |
+| `-ReplaceProfile` | 把原本的 `profile.ps1`、`Microsoft.PowerShell_profile.ps1` 移到同一個資料夾裡的 `backup-before-cli-setup-<時間>\`，由 cli-setup 接管 |
 | `-Time on\|off` · `-Ip on\|off` · `-Font on\|off` | 同上 |
 | `-WindowsTerminal on\|off` | 是否把 Windows Terminal 的預設字型改成 Hack Nerd Font Mono |
 | `-SkipPackages` | 不安裝任何工具 / 模組 |
@@ -223,16 +233,24 @@ Windows 版會移除 PowerShell 內建、名稱衝突的 `gc`（Get-Content）�
 **Windows**
 
 ```
-~\.config\cli-setup\
+~\.config\cli-setup\                       ← 真正的設定都放在本機
 ├── profile.ps1       ← PowerShell 設定（config/windows/profile.ps1）
+├── conda-defer.ps1   ← Conda 背景啟用
 ├── options.ps1       ← 你在選單裡的選擇
 ├── aliases.ps1       ← 常用 alias
 └── local.ps1         ← (選用) 你自己的設定，不會被覆蓋
 ~\.config\starship.toml
-Documents\PowerShell\profile.ps1         ← 加上一段載入上面 profile.ps1 的程式碼（PowerShell 7）
-Documents\WindowsPowerShell\profile.ps1  ← 同上（Windows PowerShell 5.1）
-%LOCALAPPDATA%\cli-setup\cache\          ← 初始化快取
+<文件>\PowerShell\profile.ps1               ← 只加一小段載入程式碼（PowerShell 7）
+<文件>\WindowsPowerShell\profile.ps1        ← 同上，只有選擇套用 5.1 時才會加
+%LOCALAPPDATA%\cli-setup\cache\             ← 初始化快取
+%LOCALAPPDATA%\cli-setup\Start-PowerShell-Local.cmd  ← 備援啟動器
 ```
+
+`<文件>` 是 Windows 實際的「文件」資料夾。安裝程式會直接詢問每個 PowerShell 版本的 `$PROFILE` 位置，所以文件資料夾被導向 OneDrive、Synology Drive 或網路磁碟時也能放對地方：
+
+- **同步資料夾裡只放一小段載入程式碼**，真正的設定放在本機的 `~\.config\cli-setup\`。其他同步的電腦還沒裝 cli-setup 時，只會顯示一行安裝提示，不會出錯。
+- **同步資料夾暫時讀不到時**（離線、還沒同步完成），按 `Win + R` 執行 `%LOCALAPPDATA%\cli-setup\Start-PowerShell-Local.cmd`，直接載入本機的設定。
+- 安裝時也會設定 `POWERSHELL_UPDATECHECK=Off`，關掉 PowerShell 7 的更新提示（部分中文環境會因此當掉）。
 
 原本就有的設定檔，如果內容和新的不一樣，會先備份到 `~/.cli-setup-backup/<時間>/`，再寫入新的。
 
@@ -256,7 +274,7 @@ cp ~/.cli-setup-backup/<時間>/starship.toml ~/.config/starship.toml
 defaults import com.apple.Terminal ~/.cli-setup-backup/<時間>/com.apple.Terminal.plist   # macOS：還原 Terminal.app
 ```
 
-Windows：從 `~\.cli-setup-backup\<時間>\` 把檔案複製回去，並刪除 `Documents\PowerShell\profile.ps1` 裡 `# >>> cli-setup >>>` 到 `# <<< cli-setup <<<` 那一段。
+Windows：從 `~\.cli-setup-backup\<時間>\` 把檔案複製回去，並刪除 `<文件>\PowerShell\profile.ps1` 裡 `# >>> cli-setup >>>` 到 `# <<< cli-setup <<<` 那一段。用 `-ReplaceProfile` 安裝的話，原本的設定檔在 `<文件>\PowerShell\backup-before-cli-setup-<時間>\`，搬回原位即可。
 
 ## 📄 License
 
