@@ -276,7 +276,7 @@ if [[ $SKIP_BREW -eq 0 ]]; then
   fi
   ok "brew $(brew --version | head -1 | awk '{print $2}')"
 
-  pkgs="git starship"
+  pkgs="starship"; command -v git >/dev/null 2>&1 || pkgs="git $pkgs"
   for p in $SEL; do
     d="$(brew_dep "$p")"
     [[ -n "$d" ]] && case " $pkgs " in *" $d "*) ;; *) pkgs="$pkgs $d" ;; esac
