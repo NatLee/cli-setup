@@ -1,0 +1,134 @@
+# ~/.config/starship.toml
+
+"$schema" = 'https://starship.rs/config-schema.json'
+
+add_newline = true
+command_timeout = 1000
+
+# Color and layout
+format = """
+$env_var\
+[╭─](fg:240)\
+[](bg:215 fg:240)\
+$username\
+[](fg:215 bg:149)\
+$os\
+[](fg:149 bg:221)\
+$hostname\
+[](fg:221 bg:110)\
+$directory\
+[](fg:110 bg:176)\
+$git_branch\
+$git_status\
+[](fg:176 bg:116)\
+$conda\
+$python\
+[](fg:116 bg:none)\
+$fill\
+$time\
+$localip\
+$cmd_duration\
+$line_break\
+[╰─](fg:240)\
+$character"""
+
+[fill]
+symbol = "·"
+style = "fg:240"
+
+[character]
+success_symbol = "[❯](fg:34)"
+error_symbol = "[✖](fg:160)"
+vimcmd_symbol = "[V](fg:34)"
+
+[directory]
+format = "[ $path ]($style)"
+style = "bg:110 fg:16"
+truncation_length = 4
+truncate_to_repo = true
+read_only = " "
+read_only_style = "bg:110 fg:160"
+
+[git_branch]
+format = '[ $symbol$branch ]($style)'
+symbol = "󰊢 "
+style = "bg:176 fg:16"
+
+[git_status]
+format = '[$all_status$ahead_behind ]($style)'
+style = "bg:176 fg:16"
+conflicted = ":crossed_swords: "
+ahead = "↑${count}"
+behind = "↓${count}"
+diverged = "↕↑${ahead_count}↓${behind_count}"
+untracked = "?${count}"
+stashed = ":package:"
+modified = "!${count}"
+staged = "+${count}"
+renamed = "»${count}"
+deleted = "✘${count}"
+
+[username]
+format = '[ $user ]($style)'
+style_user = "bg:215 fg:16"
+style_root = "bg:215 fg:16 bold"
+show_always = true
+
+[hostname]
+format = '[ $hostname ]($style)'
+style = "bg:221 fg:16"
+ssh_only = false
+trim_at = "."
+
+[time]
+format = '[ 󰥔 $time ]($style)'
+style = "fg:110"
+time_format = "%H:%M:%S"
+disabled = false
+
+[cmd_duration]
+min_time = 5000
+format = "[ :stopwatch: $duration ]($style)"
+style = "fg:179"
+
+# Python 模組
+[python]
+format = '[ ${symbol}${version} ]($style)'
+symbol = "󰌠 "
+style = "bg:116 fg:16"
+detect_extensions = ["py"]
+
+# Conda 模組
+[conda]
+format = '[ ${symbol}${environment} ]($style)'
+symbol = "󰌠 "
+style = "bg:116 fg:16"
+ignore_base = false
+
+# 顯示 IP 地址
+[localip]
+format = '[ 󰖟 $localipv4 ]($style)'
+style = "fg:114"
+ssh_only = false
+disabled = false
+
+# OS 模組
+[os]
+format = '[ $symbol ]($style)'
+style = "bg:149 fg:16"
+disabled = false
+
+# OS 符號
+[os.symbols]
+Windows = "󰖳"
+Ubuntu = "󰕈"
+Debian = "󰣚"
+Macos = "󰀵"
+Linux = "󰌽"
+Alpine = "󰣨"
+Arch = "󰣇"
+Android = "󰀲"
+Kali = "󱆀"
+Pop = "󰣜"
+Raspbian = "󰐿"
+Unknown = "?"

@@ -1,0 +1,65 @@
+# ~/.zsh/.zshrc  —  managed by mac-zsh-setup
+# https://github.com/NatLee/mac-zsh-setup
+
+# ================================
+# Paths & history
+# ================================
+export ZSH=$HOME/.zsh
+export HISTFILE=$ZSH/.zsh_history
+export HISTSIZE=10000          # commands kept in memory
+export SAVEHIST=10000          # commands saved to file
+setopt HIST_IGNORE_ALL_DUPS    # don't save duplicates
+setopt HIST_FIND_NO_DUPS       # don't show duplicates on search
+
+# Homebrew (Apple Silicon / Intel)
+if [[ -x /opt/homebrew/bin/brew ]]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [[ -x /usr/local/bin/brew ]]; then
+  eval "$(/usr/local/bin/brew shellenv)"
+fi
+
+# ================================
+# Plugins
+# ================================
+fpath=($ZSH/plugins/zsh-completions/src $fpath)
+autoload -Uz compinit && compinit
+
+source $ZSH/plugins/fast-syntax-highlighting/fast-syntax-highlighting.plugin.zsh
+
+# zsh-autosuggestions
+source $ZSH/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
+ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE="fg=244"   # soft grey (232 = darker … 255 = brighter)
+ZSH_AUTOSUGGEST_STRATEGY=(history completion)
+ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
+
+# ================================
+# Prompt (Starship)
+# ================================
+export STARSHIP_CONFIG=~/.config/starship.toml
+eval "$(starship init zsh)"
+
+# ================================
+# Conda (optional, only if installed)
+# Starship already shows the env, so hide conda's own "(base)" prefix.
+# ================================
+export CONDA_CHANGEPS1=false
+for __conda_root in "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/miniforge3" \
+                    "/opt/homebrew/Caskroom/miniconda/base" "/opt/homebrew/Caskroom/miniforge/base"; do
+  if [[ -x "$__conda_root/bin/conda" ]]; then
+    __conda_setup="$("$__conda_root/bin/conda" 'shell.zsh' 'hook' 2> /dev/null)"
+    if [[ $? -eq 0 ]]; then
+      eval "$__conda_setup"
+    elif [[ -f "$__conda_root/etc/profile.d/conda.sh" ]]; then
+      . "$__conda_root/etc/profile.d/conda.sh"
+    else
+      export PATH="$__conda_root/bin:$PATH"
+    fi
+    break
+  fi
+done
+unset __conda_root __conda_setup
+
+# ================================
+# Local overrides (not managed by this repo)
+# ================================
+[[ -f $ZSH/.zshrc.local ]] && source $ZSH/.zshrc.local
