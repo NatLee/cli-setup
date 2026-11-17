@@ -1,65 +1,215 @@
 # ~/.zsh/.zshrc  —  managed by mac-zsh-setup
 # https://github.com/NatLee/mac-zsh-setup
+#
+# Options chosen at install time live in ~/.zsh/options.zsh (re-run install.sh to change them).
+# Personal tweaks go in ~/.zsh/.zshrc.local — it is never overwritten.
 
-# ================================
-# Paths & history
-# ================================
 export ZSH=$HOME/.zsh
-export HISTFILE=$ZSH/.zsh_history
-export HISTSIZE=10000          # commands kept in memory
-export SAVEHIST=10000          # commands saved to file
-setopt HIST_IGNORE_ALL_DUPS    # don't save duplicates
-setopt HIST_FIND_NO_DUPS       # don't show duplicates on search
+ZSH_CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/zsh
+[[ -d $ZSH_CACHE ]] || mkdir -p $ZSH_CACHE
 
-# Homebrew (Apple Silicon / Intel)
-if [[ -x /opt/homebrew/bin/brew ]]; then
-  eval "$(/opt/homebrew/bin/brew shellenv)"
-elif [[ -x /usr/local/bin/brew ]]; then
-  eval "$(/usr/local/bin/brew shellenv)"
+# ---------- defaults (overridden by options.zsh) ----------
+MZS_PLUGINS=(autosuggestions syntax-highlighting completions)
+MZS_SUGGEST_COLOR=244
+MZS_THEME=soft
+MZS_CONDA=fast
+[[ -r $ZSH/options.zsh ]] && source $ZSH/options.zsh
+
+_mzs_has() { (( ${MZS_PLUGINS[(Ie)$1]} )); }
+
+# Source the output of a slow init command, regenerated only when the binary changes.
+#   _mzs_cached <name> <binary> <command...>
+_mzs_cached() {
+  local name=$1 bin=$2; shift 2
+  local f=$ZSH_CACHE/$name.zsh
+  if [[ ! -s $f || $bin -nt $f ]]; then
+    "$@" >| $f 2>/dev/null || { rm -f $f; return 1; }
+  fi
+  source $f
+}
+
+# ================================
+# History
+# ================================
+HISTFILE=$ZSH/.zsh_history
+HISTSIZE=50000
+SAVEHIST=50000
+setopt EXTENDED_HISTORY        # save timestamps
+setopt SHARE_HISTORY           # share history between open terminals
+setopt HIST_IGNORE_ALL_DUPS    # drop older duplicates
+setopt HIST_FIND_NO_DUPS       # no duplicates when searching
+setopt HIST_IGNORE_SPACE       # " cmd" (leading space) is not saved
+setopt HIST_REDUCE_BLANKS
+setopt HIST_VERIFY             # !! expands first, runs on next Enter
+
+# ================================
+# General
+# ================================
+setopt AUTO_CD                 # type a directory name to cd into it
+setopt INTERACTIVE_COMMENTS    # allow # comments at the prompt
+setopt NO_BEEP
+export CLICOLOR=1
+bindkey -e
+
+# ================================
+# Homebrew (cached `brew shellenv`)
+# ================================
+for __brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+  [[ -x $__brew ]] && { _mzs_cached brew-shellenv $__brew $__brew shellenv; break; }
+done
+unset __brew
+[[ -n $HOMEBREW_PREFIX ]] && fpath=($HOMEBREW_PREFIX/share/zsh/site-functions $fpath)
+
+# ================================
+# Completion (dump rebuilt at most once a day)
+# ================================
+_mzs_has completions && fpath=($ZSH/plugins/zsh-completions/src $fpath)
+autoload -Uz compinit
+__zcd=$ZSH_CACHE/zcompdump
+__stale=($__zcd(N.mh+24))
+if [[ ! -s $__zcd || -n $__stale ]]; then
+  compinit -i -d $__zcd
+  touch $__zcd
+else
+  compinit -C -d $__zcd
+fi
+{ [[ $__zcd.zwc -nt $__zcd ]] || zcompile $__zcd } &!
+unset __zcd __stale
+
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|[._-]=* r:|=*' 'l:|=* r:|=*'
+zstyle ':completion:*' use-cache on
+zstyle ':completion:*' cache-path $ZSH_CACHE/zcompcache
+zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
+zstyle ':completion:*:descriptions' format '[%d]'
+zstyle ':completion:*:git-checkout:*' sort false
+if _mzs_has fzf-tab; then
+  zstyle ':completion:*' menu no
+  zstyle ':fzf-tab:*' fzf-flags --height=40% --color=bg+:236,hl:110,hl+:110,pointer:149,marker:176,prompt:110
+  zstyle ':fzf-tab:complete:cd:*' fzf-preview 'ls -1 -G $realpath'
+else
+  zstyle ':completion:*' menu select
 fi
 
 # ================================
 # Plugins
 # ================================
-fpath=($ZSH/plugins/zsh-completions/src $fpath)
-autoload -Uz compinit && compinit
+_mzs_has fzf-tab && (( $+commands[fzf] )) && source $ZSH/plugins/fzf-tab/fzf-tab.plugin.zsh
 
-source $ZSH/plugins/fast-syntax-highlighting/fast-syntax-highlighting.plugin.zsh
+if _mzs_has you-should-use; then
+  export YSU_MESSAGE_POSITION=after
+  source $ZSH/plugins/zsh-you-should-use/you-should-use.plugin.zsh
+fi
 
-# zsh-autosuggestions
-source $ZSH/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
-ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE="fg=244"   # soft grey (232 = darker … 255 = brighter)
-ZSH_AUTOSUGGEST_STRATEGY=(history completion)
-ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
+if _mzs_has syntax-highlighting; then
+  FAST_WORK_DIR=$ZSH_CACHE/fsh
+  # skip the plugin's one-time network download on first start
+  [[ -e $FAST_WORK_DIR/secondary_theme.zsh ]] || { mkdir -p $FAST_WORK_DIR; touch $FAST_WORK_DIR/secondary_theme.zsh; }
+  source $ZSH/plugins/fast-syntax-highlighting/fast-syntax-highlighting.plugin.zsh
+  [[ $MZS_THEME != default && -r $ZSH/themes/$MZS_THEME.zsh ]] && source $ZSH/themes/$MZS_THEME.zsh
+fi
+
+if _mzs_has history-substring-search; then
+  source $ZSH/plugins/zsh-history-substring-search/zsh-history-substring-search.zsh
+  HISTORY_SUBSTRING_SEARCH_HIGHLIGHT_FOUND='fg=149,bold'
+  HISTORY_SUBSTRING_SEARCH_HIGHLIGHT_NOT_FOUND='fg=167,bold'
+  HISTORY_SUBSTRING_SEARCH_ENSURE_UNIQUE=1
+  bindkey '^[[A' history-substring-search-up
+  bindkey '^[[B' history-substring-search-down
+  bindkey '^P'   history-substring-search-up
+  bindkey '^N'   history-substring-search-down
+fi
+
+if _mzs_has autosuggestions; then
+  ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE="fg=$MZS_SUGGEST_COLOR"
+  ZSH_AUTOSUGGEST_STRATEGY=(history completion)
+  ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
+  ZSH_AUTOSUGGEST_USE_ASYNC=1
+  ZSH_AUTOSUGGEST_MANUAL_REBIND=1    # don't re-wrap widgets before every prompt
+  source $ZSH/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
+fi
 
 # ================================
-# Prompt (Starship)
+# CLI tools
 # ================================
-export STARSHIP_CONFIG=~/.config/starship.toml
-eval "$(starship init zsh)"
+if _mzs_has fzf && (( $+commands[fzf] )); then
+  export FZF_DEFAULT_OPTS='--height=40% --layout=reverse --border --color=bg+:236,hl:110,hl+:110,pointer:149,marker:176,prompt:110,info:244'
+  _mzs_cached fzf $commands[fzf] fzf --zsh    # Ctrl-R history · Ctrl-T files · Alt-C cd
+fi
+
+if _mzs_has eza && (( $+commands[eza] )); then
+  alias ls='eza --icons=auto --group-directories-first'
+  alias ll='eza -l --icons=auto --group-directories-first --git --time-style=relative'
+  alias la='eza -la --icons=auto --group-directories-first --git --time-style=relative'
+  alias lt='eza --tree --level=2 --icons=auto'
+fi
 
 # ================================
-# Conda (optional, only if installed)
-# Starship already shows the env, so hide conda's own "(base)" prefix.
+# Conda — Starship already shows the env, so hide conda's own "(base)" prefix.
+#   fast : cached hook + instant base activation (default)
+#   lazy : load conda on first `conda` call (fastest, base not active at start)
+#   full : official `conda init` behaviour
+#   off  : don't load conda
 # ================================
 export CONDA_CHANGEPS1=false
-for __conda_root in "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/miniforge3" \
-                    "/opt/homebrew/Caskroom/miniconda/base" "/opt/homebrew/Caskroom/miniforge/base"; do
-  if [[ -x "$__conda_root/bin/conda" ]]; then
-    __conda_setup="$("$__conda_root/bin/conda" 'shell.zsh' 'hook' 2> /dev/null)"
-    if [[ $? -eq 0 ]]; then
-      eval "$__conda_setup"
-    elif [[ -f "$__conda_root/etc/profile.d/conda.sh" ]]; then
-      . "$__conda_root/etc/profile.d/conda.sh"
-    else
-      export PATH="$__conda_root/bin:$PATH"
-    fi
+if [[ $MZS_CONDA != off ]]; then
+  for __root in $HOME/miniconda3 $HOME/anaconda3 $HOME/miniforge3 \
+                /opt/homebrew/Caskroom/miniconda/base /opt/homebrew/Caskroom/miniforge/base; do
+    [[ -x $__root/bin/conda ]] || continue
+    __root=${__root:A}    # resolve symlinks, as conda does
+    case $MZS_CONDA in
+      lazy)
+        typeset -g __MZS_CONDA_ROOT=$__root
+        conda() {
+          unfunction conda
+          eval "$($__MZS_CONDA_ROOT/bin/conda shell.zsh hook 2>/dev/null)"
+          conda "$@"
+        }
+        ;;
+      full)
+        eval "$($__root/bin/conda shell.zsh hook 2>/dev/null)"
+        ;;
+      *)  # fast
+        __hook=$ZSH_CACHE/conda-hook.zsh
+        if [[ ! -s $__hook || $__root/bin/conda -nt $__hook ]]; then
+          $__root/bin/conda shell.zsh hook 2>/dev/null | sed '/^conda activate/d' >| $__hook
+        fi
+        source $__hook
+        # Activate base without spawning Python — unless base needs activation scripts / env vars.
+        if [[ -z $CONDA_PREFIX ]]; then
+          __adir=($__root/etc/conda/activate.d/*(N))
+          if (( $#__adir )) || [[ -s $__root/conda-meta/state ]]; then
+            conda activate base
+          else
+            export CONDA_SHLVL=1 CONDA_PREFIX=$__root CONDA_DEFAULT_ENV=base CONDA_PROMPT_MODIFIER=
+            path=($__root/bin $path)
+          fi
+        fi
+        unset __hook __adir
+        ;;
+    esac
     break
-  fi
-done
-unset __conda_root __conda_setup
+  done
+  unset __root
+fi
+
+# ================================
+# Prompt (Starship, cached init)
+# ================================
+export STARSHIP_CONFIG=~/.config/starship.toml
+(( $+commands[starship] )) && _mzs_cached starship $commands[starship] starship init zsh --print-full-init
+
+# zoxide must be initialised last
+if _mzs_has zoxide && (( $+commands[zoxide] )); then
+  _mzs_cached zoxide $commands[zoxide] zoxide init zsh    # z <dir> · zi = interactive
+fi
 
 # ================================
 # Local overrides (not managed by this repo)
 # ================================
 [[ -f $ZSH/.zshrc.local ]] && source $ZSH/.zshrc.local
+
+# Wrap every widget defined above for autosuggestions once (MANUAL_REBIND mode)
+(( $+functions[_zsh_autosuggest_bind_widgets] )) && _zsh_autosuggest_bind_widgets
+
+# Clear the cache after changing tools by hand:  zsh-cache-clear
+zsh-cache-clear() { rm -rf $ZSH_CACHE/*.zsh $ZSH_CACHE/zcompdump* && echo "zsh cache cleared — restart the shell"; }
