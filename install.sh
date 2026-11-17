@@ -406,7 +406,9 @@ if [[ $TERMINAL_APP -eq 1 ]]; then
   step "Terminal.app"
   if defaults read com.apple.Terminal "Window Settings" >/dev/null 2>&1; then
     font="-"
-    ls "$HOME/Library/Fonts"/HackNerdFontMono-Regular.* /Library/Fonts/HackNerdFontMono-Regular.* >/dev/null 2>&1 && font="HackNFM-Regular"
+    for f in "$HOME/Library/Fonts"/HackNerdFontMono-Regular.* /Library/Fonts/HackNerdFontMono-Regular.*; do
+      [[ -e "$f" ]] && font="HackNFM-Regular"
+    done
     mkdir -p "$BACKUP_DIR"
     defaults export com.apple.Terminal "$BACKUP_DIR/com.apple.Terminal.plist"
     if result="$(osascript -l JavaScript "$SRC_DIR/config/terminal-app.js" "$font" 2>&1)"; then
