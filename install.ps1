@@ -106,14 +106,21 @@ function Invoke-ZsSetup {
     }
     $roots | Where-Object { $_ -and (Test-Path (Join-Path $_ 'Scripts\conda.exe')) } | Select-Object -First 1
   }
+  # Run a script in another PowerShell edition. -EncodedCommand sidesteps 5.1's broken quoting of native
+  # arguments, and stderr must not become a terminating error under $ErrorActionPreference = 'Stop'.
+  function Invoke-Edition([string]$exe, [string]$script) {
+    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { & $exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $enc 2>$null } catch { } finally { $ErrorActionPreference = $prev }
+  }
   function Get-ProfilePath([string]$exe, [string]$which) {
     if (-not $exe -or -not (Test-Path $exe)) { return }
-    $r = & $exe -NoLogo -NoProfile -NonInteractive -Command "`$PROFILE.$which" 2>$null | Select-Object -Last 1
+    $r = Invoke-Edition $exe "`$PROFILE.$which" | Select-Object -Last 1
     if ($r) { $r.Trim() }
   }
   # Effective policy for an edition, ignoring the Process scope this installer may have been started with.
   function Get-EffectivePolicy([string]$exe, [bool]$core) {
-    $list = & $exe -NoLogo -NoProfile -NonInteractive -Command 'Get-ExecutionPolicy -List | ForEach-Object { "{0}={1}" -f $_.Scope, $_.ExecutionPolicy }' 2>$null
+    $list = Invoke-Edition $exe 'Get-ExecutionPolicy -List | ForEach-Object { "{0}={1}" -f $_.Scope, $_.ExecutionPolicy }'
     $map = @{}; foreach ($l in $list) { $k, $v = $l -split '=', 2; $map[$k] = $v }
     foreach ($scope in 'MachinePolicy', 'UserPolicy', 'CurrentUser', 'LocalMachine') {
       if ($map[$scope] -and $map[$scope] -ne 'Undefined') { return @{ Policy = $map[$scope]; Scope = $scope } }
@@ -318,7 +325,9 @@ foreach ($m in $args) {
 '@
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("& { $installCmd } $($modules -join ' ')"))
     foreach ($t in $targets) {
+      $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
       & $t.Exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded 2>&1 | Out-Null
+      $ErrorActionPreference = $prev
       if ($LASTEXITCODE -eq 0) { Ok "$($t.Name)：$($modules -join ', ')" } else { Warn "$($t.Name)：模組安裝失敗（之後可重跑）" }
     }
 
@@ -350,7 +359,7 @@ foreach ($m in $args) {
 
   # ---------- 5. config source ----------
   Step '設定檔來源'
-  $src = $null
+  $src = $null; $tmpRepo = $null
   if ($PSCommandPath) {
     $here = Split-Path -Parent $PSCommandPath
     if (Test-Path (Join-Path $here 'config\windows\profile.ps1')) { $src = $here }
@@ -402,7 +411,9 @@ foreach ($m in $args) {
   Ok $optFile
 
   if ($condaRoot -and $ZS.Conda -ne 'off') {
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     & (Join-Path $condaRoot 'Scripts\conda.exe') config --set changeps1 False 2>&1 | Out-Null
+    $ErrorActionPreference = $prev
     Ok "conda：changeps1 = False（載入方式：$($ZS.Conda)）"
   }
 
@@ -456,7 +467,7 @@ Remove-Variable __zs -ErrorAction SilentlyContinue
       if ($pol.Scope -in 'MachinePolicy', 'UserPolicy') { Warn "$($t.Name)：執行原則由群組原則設為 $($pol.Policy)，設定檔不會載入" }
       else {
         try {
-          & $t.Exe -NoLogo -NoProfile -NonInteractive -Command 'Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force' 2>&1 | Out-Null
+          Invoke-Edition $t.Exe 'Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force' | Out-Null
           Ok "$($t.Name)：執行原則 $($pol.Policy) → RemoteSigned（目前使用者）"
         } catch { Warn "$($t.Name)：無法調整執行原則：$($_.Exception.Message)" }
       }
@@ -519,9 +530,11 @@ Remove-Variable __zs -ErrorAction SilentlyContinue
   $shell = $targets[0].Exe
   # PSReadLine is already loaded by the console before profiles run, so don't count it
   $measure = "Import-Module PSReadLine -ErrorAction SilentlyContinue; `$env:CLI_SETUP_INTERACTIVE = '1'; `$sw = [Diagnostics.Stopwatch]::StartNew(); . '$ZsDir\profile.ps1' *> `$null; `$sw.ElapsedMilliseconds"
-  $times = foreach ($i in 1..4) { & $shell -NoLogo -NoProfile -NonInteractive -Command $measure 2>$null | Select-Object -Last 1 }
+  $times = foreach ($i in 1..4) { Invoke-Edition $shell $measure | Select-Object -Last 1 }
   $best = ($times | Select-Object -Skip 1 | ForEach-Object { [int]$_ } | Measure-Object -Minimum).Minimum
   Ok ("設定檔載入時間：約 {0} ms（{1}，不含 PowerShell 本身的啟動）" -f $best, $targets[0].Name)
+
+  if ($tmpRepo) { Remove-Item $tmpRepo -Recurse -Force -ErrorAction SilentlyContinue }
 
   # ---------- done ----------
   Write-Host ''
