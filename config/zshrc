@@ -51,6 +51,18 @@ setopt NO_BEEP
 export CLICOLOR=1
 bindkey -e
 
+# Keys most terminals send but zsh doesn't bind by default
+#   Home / End (all common variants) · Delete · Ctrl/Option + ←/→ word jumps
+() {
+  local k
+  for k in '^[[H' '^[OH' '^[[1~' '^[[7~';     do bindkey "$k" beginning-of-line; done
+  for k in '^[[F' '^[OF' '^[[4~' '^[[8~';     do bindkey "$k" end-of-line;       done
+  for k in '^[[1;5D' '^[[1;3D' '^[^[[D';     do bindkey "$k" backward-word;     done
+  for k in '^[[1;5C' '^[[1;3C' '^[^[[C';     do bindkey "$k" forward-word;      done
+  bindkey '^[[3~' delete-char
+  bindkey '^[[3;5~' kill-word
+}
+
 # ================================
 # Homebrew (cached `brew shellenv`)
 # ================================
@@ -136,10 +148,13 @@ if _mzs_has fzf && (( $+commands[fzf] )); then
   _mzs_cached fzf $commands[fzf] fzf --zsh    # Ctrl-R history · Ctrl-T files · Alt-C cd
 fi
 
+_mzs_has aliases && [[ -r $ZSH/aliases.zsh ]] && source $ZSH/aliases.zsh
+
 if _mzs_has eza && (( $+commands[eza] )); then
   alias ls='eza --icons=auto --group-directories-first'
-  alias ll='eza -l --icons=auto --group-directories-first --git --time-style=relative'
-  alias la='eza -la --icons=auto --group-directories-first --git --time-style=relative'
+  alias l='eza -l --icons=auto --group-directories-first --git --time-style=relative'
+  alias ll='eza -la --icons=auto --group-directories-first --git --time-style=relative'
+  alias la='eza -a --icons=auto --group-directories-first'
   alias lt='eza --tree --level=2 --icons=auto'
 fi
 

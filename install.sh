@@ -7,12 +7,13 @@
 # 直接執行會出現互動選單；也可以用參數指定（搭配 -y 完全不詢問）：
 #   -y, --yes                 不顯示選單，使用預設值（或上次安裝時的選擇）
 #   --plugins=a,b,c           選用外掛：fzf-tab, history-substring-search, you-should-use,
-#                             zoxide, fzf, eza（none = 都不要；all = 全部）
+#                             zoxide, fzf, eza, aliases（none = 都不要；all = 全部）
 #   --suggest-color=VALUE     自動建議文字顏色：dim | medium | bright | 0-255
 #   --theme=NAME              語法高亮主題：soft | minimal | default
 #   --time=on|off             Prompt 右側顯示時間
 #   --ip=on|off               Prompt 右側顯示本機 IP
 #   --conda=MODE              conda 載入方式：fast | lazy | full | off
+#   --terminal-app=on|off     設定 Terminal.app：Home/End 鍵 + Hack Nerd Font Mono 字型
 #   --no-font                 不安裝 Hack Nerd Font
 #   --skip-brew               不使用 Homebrew（需已安裝 git 與 starship）
 #   -h, --help                顯示說明
@@ -29,16 +30,18 @@ ZSH_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
 BACKUP_DIR="$HOME/.mac-zsh-setup-backup/$(date +%Y%m%d-%H%M%S)"
 
 CORE_PLUGINS="autosuggestions syntax-highlighting completions"
-OPTIONAL="fzf-tab history-substring-search you-should-use zoxide fzf eza"
+OPTIONAL="fzf-tab history-substring-search you-should-use zoxide fzf eza aliases"
 
 # ---------- defaults (overridden by a previous install, then by flags / menu) ----------
-SEL="fzf-tab history-substring-search zoxide fzf"
+SEL="fzf-tab history-substring-search zoxide fzf aliases"
+DEFAULT_SEL="$SEL"
 SUGGEST_COLOR=244
 THEME=soft
 CONDA_MODE=fast
 PROMPT_TIME=1
 PROMPT_IP=1
 INSTALL_FONT=1
+TERMINAL_APP=1
 SKIP_BREW=0
 ASSUME_YES=0
 
@@ -54,7 +57,7 @@ step() { printf '\n%s==>%s %s\n' "$C_BLUE" "$C_RESET" "$*"; }
 ok()   { printf '  %s✔%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
 warn() { printf '  %s!%s %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
 die()  { printf '%s✖ %s%s\n' "$C_RED" "$*" "$C_RESET" >&2; exit 1; }
-usage() { sed -n '3,20p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,21p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; }
 
 has()      { case " $SEL " in *" $1 "*) return 0 ;; esac; return 1; }
 toggle() {
@@ -93,7 +96,8 @@ describe() {
     you-should-use)           echo "打了完整指令時，提醒你有對應的 alias" ;;
     zoxide)                   echo "z <關鍵字> 直接跳到常去的目錄" ;;
     fzf)                      echo "Ctrl-R 搜歷史 · Ctrl-T 找檔案 · Alt-C 跳目錄" ;;
-    eza)                      echo "ls / ll / lt 換成彩色 + 圖示的 eza" ;;
+    eza)                      echo "ls / l / ll / la / lt 換成彩色 + 圖示的 eza" ;;
+    aliases)                  echo "常用 alias：ll = ls -lah、..、gst / gco 等 git 縮寫" ;;
   esac
 }
 suggest_label() {
@@ -153,11 +157,17 @@ if [[ -r "$OPTIONS_FILE" ]]; then
   MZS_PLUGINS=(); source "$OPTIONS_FILE" 2>/dev/null || true
   SEL=""
   for p in "${MZS_PLUGINS[@]:-}"; do is_optional "$p" && SEL="$SEL $p"; done
+  # options added after the last install start from their default
+  offered=" ${MZS_OFFERED[*]:-fzf-tab history-substring-search you-should-use zoxide fzf eza} "
+  for p in $DEFAULT_SEL; do
+    case "$offered" in *" $p "*) ;; *) has "$p" || SEL="$SEL $p" ;; esac
+  done
   SUGGEST_COLOR="${MZS_SUGGEST_COLOR:-$SUGGEST_COLOR}"
   THEME="${MZS_THEME:-$THEME}"
   CONDA_MODE="${MZS_CONDA:-$CONDA_MODE}"
   PROMPT_TIME="${MZS_PROMPT_TIME:-$PROMPT_TIME}"
   PROMPT_IP="${MZS_PROMPT_IP:-$PROMPT_IP}"
+  TERMINAL_APP="${MZS_TERMINAL_APP:-$TERMINAL_APP}"
 fi
 
 # ---------- 2. flags ----------
@@ -187,6 +197,7 @@ for arg in "$@"; do
       case "$CONDA_MODE" in fast|lazy|full|off) ;; *) die "--conda 只能是 fast / lazy / full / off" ;; esac ;;
     --time=on)  PROMPT_TIME=1 ;;  --time=off) PROMPT_TIME=0 ;;
     --ip=on)    PROMPT_IP=1 ;;    --ip=off)   PROMPT_IP=0 ;;
+    --terminal-app=on)  TERMINAL_APP=1 ;;  --terminal-app=off) TERMINAL_APP=0 ;;
     --no-font)   INSTALL_FONT=0 ;;
     --skip-brew) SKIP_BREW=1 ;;
     -h|--help)   usage; exit 0 ;;
@@ -205,15 +216,15 @@ show_menu() {
   printf '\n  %s外掛 / 工具%s\n' "$C_BOLD" "$C_RESET"
   for p in $OPTIONAL; do
     if has "$p"; then mark="${C_GREEN}[x]${C_RESET}"; else mark="${C_DIM}[ ]${C_RESET}"; fi
-    case "$p" in fzf-tab|history-substring-search|zoxide|fzf) star="${C_YELLOW}★${C_RESET}" ;; *) star=" " ;; esac
+    case "$p" in fzf-tab|history-substring-search|zoxide|fzf|aliases) star="${C_YELLOW}★${C_RESET}" ;; *) star=" " ;; esac
     printf '  %2d %s %s %-26s %s%s%s\n' "$i" "$mark" "$star" "$p" "$C_DIM" "$(describe "$p")" "$C_RESET"
     i=$((i+1))
   done
   printf '\n  %s外觀%s\n' "$C_BOLD" "$C_RESET"
-  printf '  %2d 建議文字顏色    %-12s 預覽：%sgit sta%s%stus --short%s\n' 7 "$(suggest_label)" "$(c256 252)" "$C_RESET" "$(c256 "$SUGGEST_COLOR")" "$C_RESET"
-  printf '  %2d 語法高亮主題    %-12s 預覽：%s\n' 8 "$THEME" "$(theme_preview "$THEME")"
-  printf '  %2d Prompt 時間     %s\n' 9 "$(onoff "$PROMPT_TIME")"
-  printf '  %2d Prompt IP       %s\n' 10 "$(onoff "$PROMPT_IP")"
+  printf '  %2d 建議文字顏色    %-12s 預覽：%sgit sta%s%stus --short%s\n' 8 "$(suggest_label)" "$(c256 252)" "$C_RESET" "$(c256 "$SUGGEST_COLOR")" "$C_RESET"
+  printf '  %2d 語法高亮主題    %-12s 預覽：%s\n' 9 "$THEME" "$(theme_preview "$THEME")"
+  printf '  %2d Prompt 時間     %s\n' 10 "$(onoff "$PROMPT_TIME")"
+  printf '  %2d Prompt IP       %s\n' 11 "$(onoff "$PROMPT_IP")"
   printf '\n  %s其他%s\n' "$C_BOLD" "$C_RESET"
   if [[ -n "$CONDA_ROOT" ]]; then
     local cdesc
@@ -223,16 +234,18 @@ show_menu() {
       full) cdesc="官方 conda init 行為（最慢）" ;;
       off)  cdesc="不載入 conda" ;;
     esac
-    printf '  %2d Conda 載入方式  %-12s %s%s%s\n' 11 "$CONDA_MODE" "$C_DIM" "$cdesc" "$C_RESET"
+    printf '  %2d Conda 載入方式  %-12s %s%s%s\n' 12 "$CONDA_MODE" "$C_DIM" "$cdesc" "$C_RESET"
   else
-    printf '  %s%2d Conda 載入方式  （沒有偵測到 conda）%s\n' "$C_DIM" 11 "$C_RESET"
+    printf '  %s%2d Conda 載入方式  （沒有偵測到 conda）%s\n' "$C_DIM" 12 "$C_RESET"
   fi
   if [[ $SKIP_BREW -eq 1 ]]; then
-    printf '  %s%2d 安裝 Hack Nerd Font （--skip-brew，略過）%s\n' "$C_DIM" 12 "$C_RESET"
+    printf '  %s%2d 安裝 Hack Nerd Font （--skip-brew，略過）%s\n' "$C_DIM" 13 "$C_RESET"
   else
-    printf '  %2d 安裝 Hack Nerd Font  %s\n' 12 "$(onoff "$INSTALL_FONT")"
+    printf '  %2d 安裝 Hack Nerd Font  %s\n' 13 "$(onoff "$INSTALL_FONT")"
   fi
-  printf '\n  %s★ 推薦%s  輸入編號切換（可一次多個，例如 %s1 7 8%s），直接 Enter 開始安裝，q 離開\n' \
+  printf '  %2d 設定 Terminal.app  %s  %sHome/End 鍵送給 shell、字型換成 Hack Nerd Font Mono%s\n' \
+    14 "$(onoff "$TERMINAL_APP")" "$C_DIM" "$C_RESET"
+  printf '\n  %s★ 推薦%s  輸入編號切換（可一次多個，例如 %s1 8 9%s），直接 Enter 開始安裝，q 離開\n' \
     "$C_YELLOW" "$C_RESET" "$C_BOLD" "$C_RESET"
 }
 
@@ -241,18 +254,19 @@ if [[ $ASSUME_YES -eq 0 ]] && { : </dev/tty; } 2>/dev/null; then
   while true; do
     show_menu
     printf '  > '
-    read -r answer </dev/tty || answer=""
+    read -r answer </dev/tty || { echo; echo "  已取消。"; exit 0; }
     [[ -z "$answer" ]] && break
     for n in $answer; do
       case "$n" in
         q|Q) echo "  已取消。"; exit 0 ;;
-        [1-6]) toggle "${opt_arr[$((n-1))]}" ;;
-        7)  case "$SUGGEST_COLOR" in 240) SUGGEST_COLOR=244 ;; 244) SUGGEST_COLOR=248 ;; *) SUGGEST_COLOR=240 ;; esac ;;
-        8)  case "$THEME" in soft) THEME=minimal ;; minimal) THEME=default ;; *) THEME=soft ;; esac ;;
-        9)  PROMPT_TIME=$((1-PROMPT_TIME)) ;;
-        10) PROMPT_IP=$((1-PROMPT_IP)) ;;
-        11) [[ -n "$CONDA_ROOT" ]] && case "$CONDA_MODE" in fast) CONDA_MODE=lazy ;; lazy) CONDA_MODE=full ;; full) CONDA_MODE=off ;; *) CONDA_MODE=fast ;; esac ;;
-        12) [[ $SKIP_BREW -eq 0 ]] && INSTALL_FONT=$((1-INSTALL_FONT)) ;;
+        [1-7]) toggle "${opt_arr[$((n-1))]}" ;;
+        8)  case "$SUGGEST_COLOR" in 240) SUGGEST_COLOR=244 ;; 244) SUGGEST_COLOR=248 ;; *) SUGGEST_COLOR=240 ;; esac ;;
+        9)  case "$THEME" in soft) THEME=minimal ;; minimal) THEME=default ;; *) THEME=soft ;; esac ;;
+        10) PROMPT_TIME=$((1-PROMPT_TIME)) ;;
+        11) PROMPT_IP=$((1-PROMPT_IP)) ;;
+        12) [[ -n "$CONDA_ROOT" ]] && case "$CONDA_MODE" in fast) CONDA_MODE=lazy ;; lazy) CONDA_MODE=full ;; full) CONDA_MODE=off ;; *) CONDA_MODE=fast ;; esac ;;
+        13) [[ $SKIP_BREW -eq 0 ]] && INSTALL_FONT=$((1-INSTALL_FONT)) ;;
+        14) TERMINAL_APP=$((1-TERMINAL_APP)) ;;
         *)  warn "沒有這個選項：$n" ;;
       esac
     done
@@ -358,6 +372,9 @@ ok "~/.zshrc → $ZSH_DIR/.zshrc"
 cp "$SRC_DIR"/config/themes/*.zsh "$ZSH_DIR/themes/"
 ok "語法高亮主題：$THEME"
 
+cp "$SRC_DIR/config/aliases.zsh" "$ZSH_DIR/aliases.zsh"
+if has aliases; then ok "常用 alias：$ZSH_DIR/aliases.zsh"; fi
+
 tmp_toml="$(mktemp)"
 cp "$SRC_DIR/config/starship.toml" "$tmp_toml"
 [[ $PROMPT_TIME -eq 1 ]] && set_starship_disabled "$tmp_toml" time false    || set_starship_disabled "$tmp_toml" time true
@@ -374,11 +391,35 @@ MZS_THEME=$THEME
 MZS_CONDA=$CONDA_MODE
 MZS_PROMPT_TIME=$PROMPT_TIME
 MZS_PROMPT_IP=$PROMPT_IP
+MZS_TERMINAL_APP=$TERMINAL_APP
+MZS_OFFERED=($OPTIONAL)
 EOF
 ok "$OPTIONS_FILE"
 
 if [[ -n "$CONDA_ROOT" && "$CONDA_MODE" != off ]]; then
   "$CONDA_ROOT/bin/conda" config --set changeps1 False >/dev/null 2>&1 && ok "conda：changeps1 = False（載入方式：${CONDA_MODE}）"
+fi
+
+# ---------- Terminal.app profile ----------
+TERMINAL_DONE=0
+if [[ $TERMINAL_APP -eq 1 ]]; then
+  step "Terminal.app"
+  if defaults read com.apple.Terminal "Window Settings" >/dev/null 2>&1; then
+    font="-"
+    ls "$HOME/Library/Fonts"/HackNerdFontMono-Regular.* /Library/Fonts/HackNerdFontMono-Regular.* >/dev/null 2>&1 && font="HackNFM-Regular"
+    mkdir -p "$BACKUP_DIR"
+    defaults export com.apple.Terminal "$BACKUP_DIR/com.apple.Terminal.plist"
+    if result="$(osascript -l JavaScript "$SRC_DIR/config/terminal-app.js" "$font" 2>&1)"; then
+      while IFS= read -r line; do ok "$line"; done <<< "$result"
+      [[ "$font" == "-" ]] && warn "找不到 Hack Nerd Font Mono，只設定了 Home/End"
+      warn "已備份原本的 Terminal 設定 → $BACKUP_DIR/com.apple.Terminal.plist"
+      TERMINAL_DONE=1
+    else
+      warn "Terminal.app 設定失敗：$result"
+    fi
+  else
+    warn "Terminal.app 還沒有任何設定（先開過一次 Terminal 再重跑），略過"
+  fi
 fi
 
 # drop cached init scripts so they're regenerated with the new setup
@@ -405,14 +446,19 @@ ok "zsh 啟動時間：約 ${best} ms"
 # ---------- done ----------
 printf '\n%s✔ 完成！%s\n\n' "$C_GREEN" "$C_RESET"
 printf '  已啟用外掛：%s\n\n' "$CORE_PLUGINS${SEL:+ $SEL}"
-cat <<EOF
-  接下來：
+echo "  接下來："
+if [[ $TERMINAL_DONE -eq 1 ]]; then
+  printf '    1. %s完全結束 Terminal.app（⌘Q）再重新打開%s，Home/End 和字型才會生效\n' "$C_YELLOW" "$C_RESET"
+  printf '       %s用 iTerm2 / VS Code 的話，字型請手動改成 Hack Nerd Font Mono%s\n' "$C_DIM" "$C_RESET"
+else
+  cat <<EOF
     1. 把終端機字型改成 ${C_YELLOW}Hack Nerd Font Mono${C_RESET}
        ${C_DIM}Terminal.app → 設定 → 描述檔 → 文字 → 字體
        iTerm2       → Settings → Profiles → Text → Font
        VS Code      → "terminal.integrated.fontFamily": "Hack Nerd Font Mono"${C_RESET}
     2. 重開終端機，或執行：${C_YELLOW}exec zsh${C_RESET}
-    3. 之後想改選項，重新執行安裝指令即可（會記住這次的選擇）
 EOF
+fi
+echo "    之後想改選項，重新執行安裝指令即可（會記住這次的選擇）"
 if [[ -d "$BACKUP_DIR" ]]; then printf '\n  %s舊檔案已備份到 %s%s\n' "$C_DIM" "$BACKUP_DIR" "$C_RESET"; fi
 echo

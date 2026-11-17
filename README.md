@@ -26,26 +26,29 @@
    3 [ ]   you-should-use             打了完整指令時，提醒你有對應的 alias
    4 [x] ★ zoxide                     z <關鍵字> 直接跳到常去的目錄
    5 [x] ★ fzf                        Ctrl-R 搜歷史 · Ctrl-T 找檔案 · Alt-C 跳目錄
-   6 [ ]   eza                        ls / ll / lt 換成彩色 + 圖示的 eza
+   6 [ ]   eza                        ls / l / ll / la / lt 換成彩色 + 圖示的 eza
+   7 [x] ★ aliases                    常用 alias：ll = ls -lah、..、gst / gco 等 git 縮寫
 
   外觀
-   7 建議文字顏色    中 (244)     預覽：git status --short
-   8 語法高亮主題    soft         預覽：git commit -m "fix" ~/src
-   9 Prompt 時間     開
-  10 Prompt IP       開
+   8 建議文字顏色    中 (244)     預覽：git status --short
+   9 語法高亮主題    soft         預覽：git commit -m "fix" ~/src
+  10 Prompt 時間     開
+  11 Prompt IP       開
 
   其他
-  11 Conda 載入方式  fast         快取 hook，瞬間啟用 base（推薦）
-  12 安裝 Hack Nerd Font  開
+  12 Conda 載入方式  fast         快取 hook，瞬間啟用 base（推薦）
+  13 安裝 Hack Nerd Font  開
+  14 設定 Terminal.app  開  Home/End 鍵送給 shell、字型換成 Hack Nerd Font Mono
 
-  ★ 推薦  輸入編號切換（可一次多個，例如 1 7 8），直接 Enter 開始安裝，q 離開
+  ★ 推薦  輸入編號切換（可一次多個，例如 1 8 9），直接 Enter 開始安裝，q 離開
   >
 ```
 
 裝好之後：
 
-1. 把終端機字型改成 **Hack Nerd Font Mono**（見下方 [設定字型](#-設定字型)）
-2. 重開終端機，或執行 `exec zsh`
+1. **完全結束 Terminal.app（⌘Q）再重新打開**：Home/End 鍵和 Nerd Font 字型會自動設定好
+   （用 iTerm2 或 VS Code 的話，字型請手動設定，見 [設定字型](#-設定字型)）
+2. 或在目前的視窗執行 `exec zsh`，先套用 zsh 的設定
 
 > 如果還沒裝 Homebrew，安裝過程會要求輸入一次 macOS 登入密碼。
 > 之後想改選項，再執行一次同一行指令就好，選單會記住你上次的選擇。
@@ -69,7 +72,31 @@
 | ★ [zoxide](https://github.com/ajeetdsouza/zoxide) | 記住你常去的目錄，用關鍵字就能跳過去 | `z proj`、`z api`；`zi` 開啟互動選單 |
 | ★ [fzf](https://github.com/junegunn/fzf) 快捷鍵 | 模糊搜尋歷史、檔案和目錄 | `Ctrl-R` 搜歷史 · `Ctrl-T` 插入檔案路徑 · `Alt-C` 跳目錄 |
 | [zsh-you-should-use](https://github.com/MichaelAquilina/zsh-you-should-use) | 打了完整指令時，提醒你其實有 alias 可以用 | 例如打 `git status` 時，提示你可以用 `gst` |
-| [eza](https://github.com/eza-community/eza) | 更好看的 `ls`，有顏色、圖示和 git 狀態 | `ls` · `ll` · `la` · `lt`（樹狀顯示） |
+| [eza](https://github.com/eza-community/eza) | 更好看的 `ls`，有顏色、圖示和 git 狀態 | `ls` · `l` · `ll` · `la` · `lt`（樹狀顯示） |
+| ★ 常用 alias | 一組常用的縮寫，見下方 [常用 alias](#-常用-alias) | `ll`、`..`、`gst`、`ports` |
+
+## ⌨️ 常用 alias
+
+所有 alias 都定義在 `~/.zsh/aliases.zsh`。git 的縮寫和 Oh My Zsh 用一樣的名稱，從 Oh My Zsh 換過來不用重新記；如果開啟了 eza，`l` / `ll` / `la` 會自動換成 eza 版本。
+
+| 分類 | alias |
+| --- | --- |
+| 目錄 | `..` → `cd ..` · `...` → `cd ../..` · `....` · `-` → `cd -` |
+| 列出檔案 | `l` → `ls -lh` · `ll` → `ls -lah` · `la` → `ls -A` |
+| 常用預設 | `mkdir` → `mkdir -p` · `grep` → 有顏色 · `df` / `du` → 容易閱讀的單位 · `h` → 最近 20 筆歷史 |
+| git | `g` · `gst` status · `gss` 簡短 status · `ga` / `gaa` add · `gc` commit · `gcmsg` commit -m · `gd` / `gds` diff · `gco` checkout · `gsw` switch · `gb` branch · `gl` pull · `gp` push · `glog` 圖形化 log · `gsta` / `gstp` stash |
+| macOS | `o` 用 Finder 打開目前目錄 · `reload` 重新啟動 shell · `path` 逐行列出 PATH · `localip` 本機 IP · `ports` 查看哪個程式在監聽哪個 port · `flushdns` 清除 DNS 快取 |
+
+想新增或覆蓋 alias，寫在 `~/.zsh/.zshrc.local` 就好，它比 `aliases.zsh` 晚載入。
+
+## ⌨️ Home / End 鍵
+
+Terminal.app 預設把 **Home / End** 拿去捲動視窗內容，按鍵根本不會送進 shell；zsh 也沒有綁定這些鍵。這個專案兩邊都會處理：
+
+- **zsh**：綁定各家終端機會送出的 Home / End / Delete 按鍵序列，以及 Ctrl / Option + ←/→ 一次跳一個單字
+- **Terminal.app**（選單第 14 項）：把預設描述檔的 Home / End 改成送給 shell，同時把字型換成 Hack Nerd Font Mono，大小維持不變。修改前會先把原本的 Terminal 設定備份到 `~/.mac-zsh-setup-backup/`
+
+Terminal.app 要**完全結束（⌘Q）再重新打開**才會生效。想捲動視窗內容時，可以用 `Shift + Home / End`。
 
 ## 🎨 外觀
 
@@ -136,12 +163,13 @@ Conda 有四種載入方式：
 | 參數 | 說明 |
 | --- | --- |
 | `-y`, `--yes` | 不顯示選單，使用預設值（或上次安裝時的選擇） |
-| `--plugins=a,b,c` | 選用外掛：`fzf-tab` `history-substring-search` `you-should-use` `zoxide` `fzf` `eza`；`none` 表示都不要，`all` 表示全部 |
+| `--plugins=a,b,c` | 選用外掛：`fzf-tab` `history-substring-search` `you-should-use` `zoxide` `fzf` `eza` `aliases`；`none` 表示都不要，`all` 表示全部 |
 | `--suggest-color=` | `dim` / `medium` / `bright`，或 `0`–`255` |
 | `--theme=` | `soft` / `minimal` / `default` |
 | `--time=on\|off` | Prompt 是否顯示時間 |
 | `--ip=on\|off` | Prompt 是否顯示 IP |
 | `--conda=` | `fast` / `lazy` / `full` / `off` |
+| `--terminal-app=on\|off` | 是否設定 Terminal.app（Home/End 鍵 + 字型） |
 | `--no-font` | 不安裝 Hack Nerd Font |
 | `--skip-brew` | 不使用 Homebrew（需要已經有 `git` 和 `starship`） |
 
@@ -157,6 +185,7 @@ git clone https://github.com/NatLee/mac-zsh-setup.git && cd mac-zsh-setup && ./i
 ~/.zsh/
 ├── .zshrc            ← zsh 設定（本 repo 的 config/zshrc）
 ├── options.zsh       ← 你在選單裡的選擇
+├── aliases.zsh       ← 常用 alias
 ├── .zshrc.local      ← (選用) 你自己的設定，不會被覆蓋
 ├── themes/           ← 語法高亮主題（soft / minimal）
 └── plugins/          ← zsh 外掛
@@ -184,12 +213,13 @@ git clone https://github.com/NatLee/mac-zsh-setup.git && cd mac-zsh-setup && ./i
 ls ~/.mac-zsh-setup-backup/                         # 找到要還原的時間點
 cp ~/.mac-zsh-setup-backup/<時間>/.zshrc ~/.zshrc
 cp ~/.mac-zsh-setup-backup/<時間>/starship.toml ~/.config/starship.toml
+defaults import com.apple.Terminal ~/.mac-zsh-setup-backup/<時間>/com.apple.Terminal.plist   # 還原 Terminal.app 設定
 ```
 
 如果要整個移除：
 
 ```bash
-rm -rf ~/.zsh/plugins ~/.zsh/themes ~/.zsh/options.zsh ~/.zshrc ~/.config/starship.toml ~/.cache/zsh
+rm -rf ~/.zsh/plugins ~/.zsh/themes ~/.zsh/options.zsh ~/.zsh/aliases.zsh ~/.zshrc ~/.config/starship.toml ~/.cache/zsh
 brew uninstall starship fzf zoxide eza
 brew uninstall --cask font-hack-nerd-font
 ```
