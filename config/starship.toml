@@ -57,12 +57,12 @@ style = "bg:176 fg:16"
 [git_status]
 format = '[$all_status$ahead_behind ]($style)'
 style = "bg:176 fg:16"
-conflicted = ":crossed_swords: "
+conflicted = "⚔️ "
 ahead = "↑${count}"
 behind = "↓${count}"
 diverged = "↕↑${ahead_count}↓${behind_count}"
 untracked = "?${count}"
-stashed = ":package:"
+stashed = "📦"
 modified = "!${count}"
 staged = "+${count}"
 renamed = "»${count}"
@@ -88,7 +88,7 @@ disabled = false
 
 [cmd_duration]
 min_time = 5000
-format = "[ :stopwatch: $duration ]($style)"
+format = "[ ⏱️ $duration ]($style)"
 style = "fg:179"
 
 # Python 模組
