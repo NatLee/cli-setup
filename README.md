@@ -45,6 +45,7 @@ irm https://raw.githubusercontent.com/NatLee/cli-setup/main/install.ps1 | iex
   11 Prompt IP       開
 
   其他
+   c 安裝 Miniconda       關  沒有偵測到 conda；開啟後裝到 ~/miniconda3，並套用下面的載入方式   ← 只有沒裝 conda 時
   12 Conda 載入方式  fast         快取 hook，瞬間啟用 base（推薦）
   13 安裝 Hack Nerd Font  開
   14 設定 Terminal.app  開  Home/End 鍵送給 shell、字型換成 Hack Nerd Font Mono   ← 只有 macOS
@@ -161,6 +162,13 @@ Windows 版會移除 PowerShell 內建、名稱衝突的 `gc`（Get-Content）�
 
 手動安裝或更新了工具後，如果行為怪怪的，執行 `zsh-cache-clear` 再重開終端機即可（zsh 和 PowerShell 都有；fish 是 `fish-cache-clear`）。
 
+**要不要裝 Miniconda 由你決定**：預設不安裝。
+
+- 已經有 conda（Miniconda、Anaconda、Miniforge、Mambaforge 都會偵測）時，直接套用下面的載入方式。
+- 沒有 conda 時，選單會多出 `c 安裝 Miniconda`，或用 `--miniconda=on` / `-Miniconda on` 指定。開啟後，安裝程式會用官方安裝檔把 Miniconda 裝到 `~/miniconda3`（Windows 是 `%USERPROFILE%\miniconda3`），裝完一樣套用下面的優化。
+- 安裝時不會執行 `conda init`，也不會改 PATH 或登錄檔，conda 由 cli-setup 的設定檔負責載入。
+- Miniconda 預設使用 Anaconda 的 defaults channel：第一次安裝套件時 conda 可能會請你同意服務條款，200 人以上的組織使用需要商業授權。不想受這些限制的話，可以自己裝 [Miniforge](https://github.com/conda-forge/miniforge)（預設 conda-forge），cli-setup 一樣會偵測到。
+
 | Conda 模式 | 說明 |
 | --- | --- |
 | `defer`（Windows 預設） | 提示字元立刻出現，base 在背景準備好、命令列空閒時才套用（約 1 秒內）。期間自己打 `conda` 或改了環境變數會自動取消；`$CondaBaseStartup.Status` 可查看狀態。腳本與 `pwsh -Command` 仍會同步啟用 base |
@@ -203,6 +211,7 @@ PowerShell 版其他加速：PSFzf（約 200 ms）改成第一次按 Ctrl-R / Ct
 | `--theme=` | `soft` / `minimal` / `default` |
 | `--time=on\|off` · `--ip=on\|off` | Prompt 是否顯示時間 / IP |
 | `--conda=` | `fast` / `lazy` / `full` / `off` |
+| `--miniconda=on\|off` | 沒有 conda 時安裝 Miniconda 到 `~/miniconda3`（預設 off；已有 conda 時忽略） |
 | `--font=on\|off` | 是否安裝 Hack Nerd Font（`--no-font` 同 `--font=off`） |
 | `--terminal-app=on\|off` | macOS：是否設定 Terminal.app |
 | `--skip-packages` | 不安裝任何套件（需要已經有 `zsh` / `fish`、`git`、`starship`） |
@@ -219,6 +228,7 @@ PowerShell 版其他加速：PSFzf（約 200 ms）改成第一次按 Ctrl-R / Ct
 | `-Plugins a,b,c` | `fzf-tab` `history-substring-search` `zoxide` `fzf` `eza` `aliases`；`none` / `all` |
 | `-SuggestColor` · `-Theme` | 同上 |
 | `-Conda` | `defer`（預設）/ `fast` / `lazy` / `full` / `off` |
+| `-Miniconda on\|off` | 沒有 conda 時安裝 Miniconda 到 `%USERPROFILE%\miniconda3`（預設 off；已有 conda 時忽略） |
 | `-EditMode Emacs\|Windows` | PSReadLine 編輯模式，預設 Emacs（和 zsh 一樣的按鍵） |
 | `-WindowsPowerShell on\|off` | Windows PowerShell 5.1 是否也套用（有 PowerShell 7 時預設 off；開啟時才會調整 5.1 的執行原則） |
 | `-ReplaceProfile` | 把原本的 `profile.ps1`、`Microsoft.PowerShell_profile.ps1` 移到同一個資料夾裡的 `backup-before-cli-setup-<時間>\`，由 cli-setup 接管 |

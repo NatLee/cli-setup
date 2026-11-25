@@ -14,6 +14,7 @@
 #   --time=on|off             Prompt 右側顯示時間
 #   --ip=on|off               Prompt 右側顯示本機 IP
 #   --conda=MODE              conda 載入方式：fast | lazy | full | off
+#   --miniconda=on|off        沒有 conda 時安裝 Miniconda 到 ~/miniconda3（預設 off；已有 conda 時忽略）
 #   --font=on|off             安裝 Hack Nerd Font（--no-font = --font=off）
 #   --terminal-app=on|off     [macOS] 設定 Terminal.app：Home/End 鍵 + Hack Nerd Font Mono 字型
 #   --skip-packages           不安裝任何套件（需已有 zsh / fish、git、starship；舊名 --skip-brew）
@@ -58,6 +59,7 @@ case "${SHELL:-}" in */fish) SHELLS=fish ;; esac
 SUGGEST_COLOR=244
 THEME=soft
 CONDA_MODE=fast
+INSTALL_MINICONDA=0
 PROMPT_TIME=1
 PROMPT_IP=1
 INSTALL_FONT=1
@@ -81,7 +83,7 @@ step() { printf '\n%s==>%s %s\n' "$C_BLUE" "$C_RESET" "$*"; }
 ok()   { printf '  %s✔%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
 warn() { printf '  %s!%s %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
 die()  { printf '%s✖ %s%s\n' "$C_RED" "$*" "$C_RESET" >&2; exit 1; }
-usage() { sed -n '3,23p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,24p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 use_shell() { case " $SHELLS " in *" $1 "*) return 0 ;; esac; return 1; }
@@ -194,6 +196,22 @@ find_conda() {
     [[ -x "$r/bin/conda" ]] && { echo "$r"; return 0; }
   done
   return 1
+}
+
+MINICONDA_DIR="$HOME/miniconda3"
+install_miniconda() {   # official installer, batch mode, into ~/miniconda3 (no `conda init`: our rc files load it)
+  local os a tmp ok=0
+  if [[ $IS_MAC -eq 1 ]]; then
+    os=MacOSX; case "$ARCH" in arm64) a=arm64 ;; x86_64) a=x86_64 ;; *) return 1 ;; esac
+  else
+    os=Linux;  case "$ARCH" in x86_64|amd64) a=x86_64 ;; aarch64|arm64) a=aarch64 ;; *) return 1 ;; esac
+  fi
+  if [[ -e "$MINICONDA_DIR" ]]; then warn "$MINICONDA_DIR 已存在但不是可用的 conda，略過（刪掉後再重跑）"; return 1; fi
+  tmp="$(mktemp -d)"
+  if curl -fsSL -o "$tmp/miniconda.sh" "https://repo.anaconda.com/miniconda/Miniconda3-latest-${os}-${a}.sh" &&
+     bash "$tmp/miniconda.sh" -b -p "$MINICONDA_DIR" >/dev/null 2>&1; then ok=1; fi
+  rm -rf "$tmp"
+  [[ $ok -eq 1 ]]
 }
 
 font_installed() {
@@ -334,6 +352,7 @@ for arg in "$@"; do
     --conda=*)
       CONDA_MODE="${arg#*=}"
       case "$CONDA_MODE" in fast|lazy|full|off) ;; *) die "--conda 只能是 fast / lazy / full / off" ;; esac ;;
+    --miniconda=on)  INSTALL_MINICONDA=1 ;;  --miniconda=off) INSTALL_MINICONDA=0 ;;
     --time=on)  PROMPT_TIME=1 ;;  --time=off) PROMPT_TIME=0 ;;
     --ip=on)    PROMPT_IP=1 ;;    --ip=off)   PROMPT_IP=0 ;;
     --font=on)  INSTALL_FONT=1 ;; --font=off|--no-font) INSTALL_FONT=0 ;;
@@ -372,17 +391,26 @@ show_menu() {
   printf '  %2d Prompt 時間     %s\n' 10 "$(onoff "$PROMPT_TIME")"
   printf '  %2d Prompt IP       %s\n' 11 "$(onoff "$PROMPT_IP")"
   printf '\n  %s其他%s\n' "$C_BOLD" "$C_RESET"
-  if [[ -n "$CONDA_ROOT" ]]; then
-    local cdesc
-    case "$CONDA_MODE" in
-      fast) cdesc="快取 hook，瞬間啟用 base（推薦）" ;;
-      lazy) cdesc="第一次打 conda 才載入，最快但 base 不會自動啟用" ;;
-      full) cdesc="官方 conda init 行為（最慢）" ;;
-      off)  cdesc="不載入 conda" ;;
-    esac
+  local cdesc
+  case "$CONDA_MODE" in
+    fast) cdesc="快取 hook，瞬間啟用 base（推薦）" ;;
+    lazy) cdesc="第一次打 conda 才載入，最快但 base 不會自動啟用" ;;
+    full) cdesc="官方 conda init 行為（最慢）" ;;
+    off)  cdesc="不載入 conda" ;;
+  esac
+  if [[ -z "$CONDA_ROOT" ]]; then
+    if [[ $SKIP_PKGS -eq 1 ]]; then
+      printf '  %s c 安裝 Miniconda       （--skip-packages，略過）%s\n' "$C_DIM" "$C_RESET"
+    else
+      printf '   c 安裝 Miniconda       %s  %s沒有偵測到 conda；開啟後裝到 ~/miniconda3，並套用下面的載入方式%s\n' \
+        "$(onoff "$INSTALL_MINICONDA")" "$C_DIM" "$C_RESET"
+    fi
+  fi
+  if [[ -n "$CONDA_ROOT" ]] || [[ $INSTALL_MINICONDA -eq 1 && $SKIP_PKGS -eq 0 ]]; then
     printf '  %2d Conda 載入方式  %-12s %s%s%s\n' 12 "$CONDA_MODE" "$C_DIM" "$cdesc" "$C_RESET"
+    [[ -n "$CONDA_ROOT" ]] && printf '  %s     已偵測到：%s%s\n' "$C_DIM" "$CONDA_ROOT" "$C_RESET"
   else
-    printf '  %s%2d Conda 載入方式  （沒有偵測到 conda）%s\n' "$C_DIM" 12 "$C_RESET"
+    printf '  %s%2d Conda 載入方式  （沒有 conda）%s\n' "$C_DIM" 12 "$C_RESET"
   fi
   if [[ $SKIP_PKGS -eq 1 ]]; then
     printf '  %s%2d 安裝 Hack Nerd Font （--skip-packages，略過）%s\n' "$C_DIM" 13 "$C_RESET"
@@ -396,7 +424,7 @@ show_menu() {
     printf '  %2d 設定 Terminal.app  %s  %sHome/End 鍵送給 shell、字型換成 Hack Nerd Font Mono%s\n' \
       14 "$(onoff "$TERMINAL_APP")" "$C_DIM" "$C_RESET"
   fi
-  printf '\n  %s★ 推薦%s  輸入編號切換（可一次多個，例如 %s1 8 9%s），直接 Enter 開始安裝，q 離開\n' \
+  printf '\n  %s★ 推薦%s  輸入編號或字母切換（可一次多個，例如 %s1 8 9%s），直接 Enter 開始安裝，q 離開\n' \
     "$C_YELLOW" "$C_RESET" "$C_BOLD" "$C_RESET"
 }
 
@@ -416,7 +444,8 @@ if [[ $ASSUME_YES -eq 0 ]] && { : </dev/tty; } 2>/dev/null; then
         9)  case "$THEME" in soft) THEME=minimal ;; minimal) THEME=default ;; *) THEME=soft ;; esac ;;
         10) PROMPT_TIME=$((1-PROMPT_TIME)) ;;
         11) PROMPT_IP=$((1-PROMPT_IP)) ;;
-        12) [[ -n "$CONDA_ROOT" ]] && case "$CONDA_MODE" in fast) CONDA_MODE=lazy ;; lazy) CONDA_MODE=full ;; full) CONDA_MODE=off ;; *) CONDA_MODE=fast ;; esac ;;
+        c|C) [[ -z "$CONDA_ROOT" && $SKIP_PKGS -eq 0 ]] && INSTALL_MINICONDA=$((1-INSTALL_MINICONDA)) ;;
+        12) [[ -n "$CONDA_ROOT" || $INSTALL_MINICONDA -eq 1 ]] && case "$CONDA_MODE" in fast) CONDA_MODE=lazy ;; lazy) CONDA_MODE=full ;; full) CONDA_MODE=off ;; *) CONDA_MODE=fast ;; esac ;;
         13) [[ $SKIP_PKGS -eq 0 ]] && INSTALL_FONT=$((1-INSTALL_FONT)) ;;
         14) [[ $IS_MAC -eq 1 ]] && TERMINAL_APP=$((1-TERMINAL_APP)) ;;
         *)  warn "沒有這個選項：$n" ;;
@@ -543,6 +572,25 @@ fi
 have git     || die "需要 git。"
 have starship || die "需要 starship。"
 for t in $tools; do have "$t" || warn "$t 找不到，相關功能啟動時會自動略過"; done
+
+# ---------- 4c. Miniconda (opt-in) ----------
+if [[ $INSTALL_MINICONDA -eq 1 ]]; then
+  if [[ -n "$CONDA_ROOT" ]]; then
+    ok "已有 conda（$CONDA_ROOT），不另外安裝 Miniconda"
+  elif [[ $SKIP_PKGS -eq 1 ]]; then
+    warn "--skip-packages：略過 Miniconda"
+  else
+    step "Miniconda → $MINICONDA_DIR（約 100 MB，需要一點時間）"
+    if install_miniconda && CONDA_ROOT="$(find_conda)"; then
+      ok "$("$CONDA_ROOT/bin/conda" --version 2>/dev/null)（$CONDA_ROOT，載入方式：$CONDA_MODE）"
+      printf '  %s  使用 Anaconda 的 defaults channel：第一次安裝套件時 conda 可能會請你同意服務條款；\n' "$C_DIM"
+      printf '    大型組織（200 人以上）使用需要商業授權，也可以改用 conda-forge channel%s\n' "$C_RESET"
+    else
+      CONDA_ROOT=""
+      warn "Miniconda 安裝失敗，可以之後再重跑"
+    fi
+  fi
+fi
 
 # ---------- 5. config source ----------
 step "設定檔來源"
