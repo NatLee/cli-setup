@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 #
-# cli-setup — zsh 外掛 + Starship + Hack Nerd Font，一行搞定（macOS / Linux / WSL）。
+# cli-setup — zsh / fish + Starship + Hack Nerd Font，一行搞定（macOS / Linux / WSL）。
 #
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/NatLee/cli-setup/main/install.sh)"
 #
 # 直接執行會出現互動選單；也可以用參數指定（搭配 -y 完全不詢問）：
 #   -y, --yes                 不顯示選單，使用預設值（或上次安裝時的選擇）
+#   --shell=NAME              要設定的 shell：zsh | fish | both（預設：目前的登入 shell 是 fish 就選 fish，否則 zsh）
 #   --plugins=a,b,c           選用外掛：fzf-tab, history-substring-search, you-should-use,
 #                             zoxide, fzf, eza, aliases（none = 都不要；all = 全部）
 #   --suggest-color=VALUE     自動建議文字顏色：dim | medium | bright | 0-255
@@ -13,9 +14,10 @@
 #   --time=on|off             Prompt 右側顯示時間
 #   --ip=on|off               Prompt 右側顯示本機 IP
 #   --conda=MODE              conda 載入方式：fast | lazy | full | off
+#   --miniconda=on|off        沒有 conda 時安裝 Miniconda 到 ~/miniconda3（預設 off；已有 conda 時忽略）
 #   --font=on|off             安裝 Hack Nerd Font（--no-font = --font=off）
 #   --terminal-app=on|off     [macOS] 設定 Terminal.app：Home/End 鍵 + Hack Nerd Font Mono 字型
-#   --skip-packages           不安裝任何套件（需已有 zsh、git、starship；舊名 --skip-brew）
+#   --skip-packages           不安裝任何套件（需已有 zsh / fish、git、starship；舊名 --skip-brew）
 #   -h, --help                顯示說明
 #
 # Windows 請改用 PowerShell 版本：
@@ -30,6 +32,10 @@ PLUGIN_DIR="$ZSH_DIR/plugins"
 OPTIONS_FILE="$ZSH_DIR/options.zsh"
 STARSHIP_TOML="$HOME/.config/starship.toml"
 ZSH_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
+FISH_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fish"
+FISH_SUPPORT="$FISH_DIR/cli-setup"
+FISH_OPTIONS="$FISH_SUPPORT/options.fish"
+FISH_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/cli-setup/fish"
 LOCAL_BIN="$HOME/.local/bin"
 BACKUP_DIR="$HOME/.cli-setup-backup/$(date +%Y%m%d-%H%M%S)"
 
@@ -48,9 +54,12 @@ esac
 # ---------- defaults (overridden by a previous install, then by flags / menu) ----------
 SEL="fzf-tab history-substring-search zoxide fzf aliases"
 DEFAULT_SEL="$SEL"
+SHELLS=zsh
+case "${SHELL:-}" in */fish) SHELLS=fish ;; esac
 SUGGEST_COLOR=244
 THEME=soft
 CONDA_MODE=fast
+INSTALL_MINICONDA=0
 PROMPT_TIME=1
 PROMPT_IP=1
 INSTALL_FONT=1
@@ -74,8 +83,28 @@ step() { printf '\n%s==>%s %s\n' "$C_BLUE" "$C_RESET" "$*"; }
 ok()   { printf '  %s✔%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
 warn() { printf '  %s!%s %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
 die()  { printf '%s✖ %s%s\n' "$C_RED" "$*" "$C_RESET" >&2; exit 1; }
-usage() { sed -n '3,25p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,24p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; }
 have() { command -v "$1" >/dev/null 2>&1; }
+
+use_shell() { case " $SHELLS " in *" $1 "*) return 0 ;; esac; return 1; }
+set_shells() {   # <zsh|fish|both|zsh,fish|...>  — non-zero if nothing valid was given
+  local v out=""
+  case " $(echo "$1" | tr ',+' '  ') " in *" both "*|*" all "*) SHELLS="zsh fish"; return 0 ;; esac
+  for v in zsh fish; do
+    case " $(echo "$1" | tr ',+' '  ') " in *" $v "*) out="$out $v" ;; esac
+  done
+  [[ -n "$out" ]] || return 1
+  SHELLS="${out# }"
+}
+shells_label() { echo "${SHELLS// / + }"; }
+c256_hex() {   # xterm 256-colour index → RRGGBB (fish takes hex colours)
+  local n=$((10#$1)) v
+  local lv=(0 95 135 175 215 255)
+  local base=(000000 800000 008000 808000 000080 800080 008080 c0c0c0 808080 ff0000 00ff00 ffff00 0000ff ff00ff 00ffff ffffff)
+  if (( n < 16 )); then echo "${base[$n]}"
+  elif (( n < 232 )); then n=$((n - 16)); printf '%02x%02x%02x\n' "${lv[$((n / 36))]}" "${lv[$(((n / 6) % 6))]}" "${lv[$((n % 6))]}"
+  else v=$((8 + (n - 232) * 10)); printf '%02x%02x%02x\n' "$v" "$v" "$v"; fi
+}
 
 has()      { case " $SEL " in *" $1 "*) return 0 ;; esac; return 1; }
 toggle() {
@@ -111,7 +140,7 @@ describe() {
   case "$1" in
     fzf-tab)                  echo "Tab 補完改成 fzf 模糊搜尋選單" ;;
     history-substring-search) echo "↑/↓ 依目前已輸入的內容搜尋歷史" ;;
-    you-should-use)           echo "打了完整指令時，提醒你有對應的 alias" ;;
+    you-should-use)           echo "打了完整指令時，提醒你有對應的 alias（僅 zsh）" ;;
     zoxide)                   echo "z <關鍵字> 直接跳到常去的目錄" ;;
     fzf)                      echo "Ctrl-R 搜歷史 · Ctrl-T 找檔案 · Alt-C 跳目錄" ;;
     eza)                      echo "ls / l / ll / la / lt 換成彩色 + 圖示的 eza" ;;
@@ -167,6 +196,22 @@ find_conda() {
     [[ -x "$r/bin/conda" ]] && { echo "$r"; return 0; }
   done
   return 1
+}
+
+MINICONDA_DIR="$HOME/miniconda3"
+install_miniconda() {   # official installer, batch mode, into ~/miniconda3 (no `conda init`: our rc files load it)
+  local os a tmp ok=0
+  if [[ $IS_MAC -eq 1 ]]; then
+    os=MacOSX; case "$ARCH" in arm64) a=arm64 ;; x86_64) a=x86_64 ;; *) return 1 ;; esac
+  else
+    os=Linux;  case "$ARCH" in x86_64|amd64) a=x86_64 ;; aarch64|arm64) a=aarch64 ;; *) return 1 ;; esac
+  fi
+  if [[ -e "$MINICONDA_DIR" ]]; then warn "$MINICONDA_DIR 已存在但不是可用的 conda，略過（刪掉後再重跑）"; return 1; fi
+  tmp="$(mktemp -d)"
+  if curl -fsSL -o "$tmp/miniconda.sh" "https://repo.anaconda.com/miniconda/Miniconda3-latest-${os}-${a}.sh" &&
+     bash "$tmp/miniconda.sh" -b -p "$MINICONDA_DIR" >/dev/null 2>&1; then ok=1; fi
+  rm -rf "$tmp"
+  [[ $ok -eq 1 ]]
 }
 
 font_installed() {
@@ -248,9 +293,23 @@ if [[ $IS_MAC -eq 1 && $EUID -eq 0 ]]; then die "請用一般使用者執行，�
 if [[ $IS_LINUX -eq 1 && $EUID -ne 0 ]] && have sudo; then SUDO="sudo"; fi
 
 # ---------- 1. previous choices ----------
-if [[ -r "$OPTIONS_FILE" ]]; then
-  # shellcheck disable=SC1090
-  MZS_PLUGINS=(); source "$OPTIONS_FILE" 2>/dev/null || true
+# zsh and fish each keep their own copy; the most recently written one wins.
+PREV_OPTIONS=""
+[[ -r "$OPTIONS_FILE" ]] && PREV_OPTIONS="$OPTIONS_FILE"
+if [[ -r "$FISH_OPTIONS" ]] && { [[ -z "$PREV_OPTIONS" ]] || [[ "$FISH_OPTIONS" -nt "$PREV_OPTIONS" ]]; }; then
+  PREV_OPTIONS="$FISH_OPTIONS"
+fi
+if [[ -n "$PREV_OPTIONS" ]]; then
+  MZS_PLUGINS=(); MZS_SHELLS=()
+  if [[ "$PREV_OPTIONS" == "$FISH_OPTIONS" ]]; then
+    # `set -g NAME a b c` → NAME=(a b c); only plain words get through
+    eval "$(sed -n 's/^set -g \(MZS_[A-Z_]*\) \([A-Za-z0-9 _-]*\)$/\1=(\2)/p' "$PREV_OPTIONS")" 2>/dev/null || true
+  else
+    # shellcheck disable=SC1090
+    source "$PREV_OPTIONS" 2>/dev/null || true
+  fi
+  # installs from before fish support have no MZS_SHELLS: they were zsh
+  if [[ ${#MZS_SHELLS[@]} -gt 0 ]]; then set_shells "${MZS_SHELLS[*]}" || SHELLS=zsh; else SHELLS=zsh; fi
   SEL=""
   for p in "${MZS_PLUGINS[@]:-}"; do is_optional "$p" && SEL="$SEL $p"; done
   # options added after the last install start from their default
@@ -270,6 +329,8 @@ fi
 for arg in "$@"; do
   case "$arg" in
     -y|--yes)          ASSUME_YES=1 ;;
+    --shell=*|--shells=*)
+      set_shells "${arg#*=}" || die "--shell 只能是 zsh / fish / both" ;;
     --plugins=*)
       v="${arg#*=}"; SEL=""
       case "$v" in
@@ -291,6 +352,7 @@ for arg in "$@"; do
     --conda=*)
       CONDA_MODE="${arg#*=}"
       case "$CONDA_MODE" in fast|lazy|full|off) ;; *) die "--conda 只能是 fast / lazy / full / off" ;; esac ;;
+    --miniconda=on)  INSTALL_MINICONDA=1 ;;  --miniconda=off) INSTALL_MINICONDA=0 ;;
     --time=on)  PROMPT_TIME=1 ;;  --time=off) PROMPT_TIME=0 ;;
     --ip=on)    PROMPT_IP=1 ;;    --ip=off)   PROMPT_IP=0 ;;
     --font=on)  INSTALL_FONT=1 ;; --font=off|--no-font) INSTALL_FONT=0 ;;
@@ -306,7 +368,7 @@ else
   PLATFORM="$( . /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-Linux}" || echo Linux)"
   [[ $IS_WSL -eq 1 ]] && PLATFORM="$PLATFORM (WSL)"
 fi
-printf '\n%s%s cli-setup %s %szsh 外掛 · Starship · Hack Nerd Font — %s%s\n' \
+printf '\n%s%s cli-setup %s %szsh / fish · Starship · Hack Nerd Font — %s%s\n' \
   "$C_BOLD" "$C_BLUE" "$C_RESET" "$C_DIM" "$PLATFORM" "$C_RESET"
 
 # ---------- 3. interactive menu ----------
@@ -314,6 +376,8 @@ CONDA_ROOT="$(find_conda || true)"
 
 show_menu() {
   local i=1 p mark star
+  printf '\n  %sShell%s\n' "$C_BOLD" "$C_RESET"
+  printf '   s 要設定的 shell  %-12s %s按 s 切換：zsh → fish → zsh + fish%s\n' "$(shells_label)" "$C_DIM" "$C_RESET"
   printf '\n  %s外掛 / 工具%s\n' "$C_BOLD" "$C_RESET"
   for p in $OPTIONAL; do
     if has "$p"; then mark="${C_GREEN}[x]${C_RESET}"; else mark="${C_DIM}[ ]${C_RESET}"; fi
@@ -327,17 +391,26 @@ show_menu() {
   printf '  %2d Prompt 時間     %s\n' 10 "$(onoff "$PROMPT_TIME")"
   printf '  %2d Prompt IP       %s\n' 11 "$(onoff "$PROMPT_IP")"
   printf '\n  %s其他%s\n' "$C_BOLD" "$C_RESET"
-  if [[ -n "$CONDA_ROOT" ]]; then
-    local cdesc
-    case "$CONDA_MODE" in
-      fast) cdesc="快取 hook，瞬間啟用 base（推薦）" ;;
-      lazy) cdesc="第一次打 conda 才載入，最快但 base 不會自動啟用" ;;
-      full) cdesc="官方 conda init 行為（最慢）" ;;
-      off)  cdesc="不載入 conda" ;;
-    esac
+  local cdesc
+  case "$CONDA_MODE" in
+    fast) cdesc="快取 hook，瞬間啟用 base（推薦）" ;;
+    lazy) cdesc="第一次打 conda 才載入，最快但 base 不會自動啟用" ;;
+    full) cdesc="官方 conda init 行為（最慢）" ;;
+    off)  cdesc="不載入 conda" ;;
+  esac
+  if [[ -z "$CONDA_ROOT" ]]; then
+    if [[ $SKIP_PKGS -eq 1 ]]; then
+      printf '  %s c 安裝 Miniconda       （--skip-packages，略過）%s\n' "$C_DIM" "$C_RESET"
+    else
+      printf '   c 安裝 Miniconda       %s  %s沒有偵測到 conda；開啟後裝到 ~/miniconda3，並套用下面的載入方式%s\n' \
+        "$(onoff "$INSTALL_MINICONDA")" "$C_DIM" "$C_RESET"
+    fi
+  fi
+  if [[ -n "$CONDA_ROOT" ]] || [[ $INSTALL_MINICONDA -eq 1 && $SKIP_PKGS -eq 0 ]]; then
     printf '  %2d Conda 載入方式  %-12s %s%s%s\n' 12 "$CONDA_MODE" "$C_DIM" "$cdesc" "$C_RESET"
+    [[ -n "$CONDA_ROOT" ]] && printf '  %s     已偵測到：%s%s\n' "$C_DIM" "$CONDA_ROOT" "$C_RESET"
   else
-    printf '  %s%2d Conda 載入方式  （沒有偵測到 conda）%s\n' "$C_DIM" 12 "$C_RESET"
+    printf '  %s%2d Conda 載入方式  （沒有 conda）%s\n' "$C_DIM" 12 "$C_RESET"
   fi
   if [[ $SKIP_PKGS -eq 1 ]]; then
     printf '  %s%2d 安裝 Hack Nerd Font （--skip-packages，略過）%s\n' "$C_DIM" 13 "$C_RESET"
@@ -351,7 +424,7 @@ show_menu() {
     printf '  %2d 設定 Terminal.app  %s  %sHome/End 鍵送給 shell、字型換成 Hack Nerd Font Mono%s\n' \
       14 "$(onoff "$TERMINAL_APP")" "$C_DIM" "$C_RESET"
   fi
-  printf '\n  %s★ 推薦%s  輸入編號切換（可一次多個，例如 %s1 8 9%s），直接 Enter 開始安裝，q 離開\n' \
+  printf '\n  %s★ 推薦%s  輸入編號或字母切換（可一次多個，例如 %s1 8 9%s），直接 Enter 開始安裝，q 離開\n' \
     "$C_YELLOW" "$C_RESET" "$C_BOLD" "$C_RESET"
 }
 
@@ -365,12 +438,14 @@ if [[ $ASSUME_YES -eq 0 ]] && { : </dev/tty; } 2>/dev/null; then
     for n in $answer; do
       case "$n" in
         q|Q) echo "  已取消。"; exit 0 ;;
+        s|S) case "$SHELLS" in zsh) SHELLS=fish ;; fish) SHELLS="zsh fish" ;; *) SHELLS=zsh ;; esac ;;
         [1-7]) toggle "${opt_arr[$((n-1))]}" ;;
         8)  case "$SUGGEST_COLOR" in 240) SUGGEST_COLOR=244 ;; 244) SUGGEST_COLOR=248 ;; *) SUGGEST_COLOR=240 ;; esac ;;
         9)  case "$THEME" in soft) THEME=minimal ;; minimal) THEME=default ;; *) THEME=soft ;; esac ;;
         10) PROMPT_TIME=$((1-PROMPT_TIME)) ;;
         11) PROMPT_IP=$((1-PROMPT_IP)) ;;
-        12) [[ -n "$CONDA_ROOT" ]] && case "$CONDA_MODE" in fast) CONDA_MODE=lazy ;; lazy) CONDA_MODE=full ;; full) CONDA_MODE=off ;; *) CONDA_MODE=fast ;; esac ;;
+        c|C) [[ -z "$CONDA_ROOT" && $SKIP_PKGS -eq 0 ]] && INSTALL_MINICONDA=$((1-INSTALL_MINICONDA)) ;;
+        12) [[ -n "$CONDA_ROOT" || $INSTALL_MINICONDA -eq 1 ]] && case "$CONDA_MODE" in fast) CONDA_MODE=lazy ;; lazy) CONDA_MODE=full ;; full) CONDA_MODE=off ;; *) CONDA_MODE=fast ;; esac ;;
         13) [[ $SKIP_PKGS -eq 0 ]] && INSTALL_FONT=$((1-INSTALL_FONT)) ;;
         14) [[ $IS_MAC -eq 1 ]] && TERMINAL_APP=$((1-TERMINAL_APP)) ;;
         *)  warn "沒有這個選項：$n" ;;
@@ -415,6 +490,7 @@ if [[ $SKIP_PKGS -eq 0 && $IS_MAC -eq 1 ]]; then
   ok "brew $(brew --version | head -1 | awk '{print $2}')"
 
   pkgs="starship${tools:+ $tools}"; have git || pkgs="git $pkgs"
+  if use_shell fish; then pkgs="fish $pkgs"; fi
   step "套件：$pkgs"
   missing=""
   for pkg in $pkgs; do
@@ -443,14 +519,15 @@ fi
 if [[ $SKIP_PKGS -eq 0 && $IS_LINUX -eq 1 ]]; then
   detect_pm
   step "套件管理器：${PM:-（沒有偵測到）}"
-  [[ -n "$PM" ]] || die "沒有偵測到 apt / dnf / pacman / zypper。請先手動安裝 zsh、git、curl，再用 --skip-packages 執行。"
+  base="$SHELLS git curl"
+  manual="請先手動安裝 ${base// /、}，再用 --skip-packages 執行"
+  [[ -n "$PM" ]] || die "沒有偵測到 apt / dnf / pacman / zypper。${manual}。"
   if [[ -n "$SUDO" ]]; then
-    sudo -v || die "需要 sudo 權限來安裝套件（或先手動安裝 zsh、git、curl，再用 --skip-packages 執行）。"
+    sudo -v || die "需要 sudo 權限來安裝套件（或${manual#請}）。"
   elif [[ $EUID -ne 0 ]]; then
-    die "沒有 sudo，無法安裝套件。請先手動安裝 zsh、git、curl，再用 --skip-packages 執行。"
+    die "沒有 sudo，無法安裝套件。${manual}。"
   fi
-
-  base="zsh git curl"
+  base_label="$base"
   [[ $INSTALL_FONT -eq 1 ]] && base="$base unzip fontconfig"
   [[ "$PM" == apt ]] && base="$base ca-certificates"
   need=""
@@ -465,7 +542,7 @@ if [[ $SKIP_PKGS -eq 0 && $IS_LINUX -eq 1 ]]; then
     # shellcheck disable=SC2086
     pm_install $need || die "安裝基本套件失敗：$need"
   fi
-  ok "zsh git curl"
+  ok "$base_label"
 
   step "工具：starship${tools:+ $tools}"
   for t in starship $tools; do
@@ -483,10 +560,37 @@ if [[ $SKIP_PKGS -eq 0 && $IS_LINUX -eq 1 ]]; then
   fi
 fi
 
-have zsh      || die "需要 zsh。"
-have git      || die "需要 git。"
+for s in $SHELLS; do have "$s" || die "需要 $s。"; done
+if use_shell fish; then
+  fish_ver="$(fish --version 2>/dev/null | sed 's/.*version //')"
+  case "$fish_ver" in
+    [12].*|3.[0-3]|3.[0-3].*)
+      warn "fish $fish_ver 比較舊：新版 fzf 的 fish 整合需要 3.4 以上，Ctrl-R / Ctrl-T / Alt-C 可能無法使用（其他功能不受影響）"
+      [[ "${PM:-}" == apt ]] && warn "Ubuntu 可以用官方 PPA 升級：sudo add-apt-repository ppa:fish-shell/release-4 && sudo apt install fish" ;;
+  esac
+fi
+have git     || die "需要 git。"
 have starship || die "需要 starship。"
 for t in $tools; do have "$t" || warn "$t 找不到，相關功能啟動時會自動略過"; done
+
+# ---------- 4c. Miniconda (opt-in) ----------
+if [[ $INSTALL_MINICONDA -eq 1 ]]; then
+  if [[ -n "$CONDA_ROOT" ]]; then
+    ok "已有 conda（$CONDA_ROOT），不另外安裝 Miniconda"
+  elif [[ $SKIP_PKGS -eq 1 ]]; then
+    warn "--skip-packages：略過 Miniconda"
+  else
+    step "Miniconda → $MINICONDA_DIR（約 100 MB，需要一點時間）"
+    if install_miniconda && CONDA_ROOT="$(find_conda)"; then
+      ok "$("$CONDA_ROOT/bin/conda" --version 2>/dev/null)（$CONDA_ROOT，載入方式：$CONDA_MODE）"
+      printf '  %s  使用 Anaconda 的 defaults channel：第一次安裝套件時 conda 可能會請你同意服務條款；\n' "$C_DIM"
+      printf '    大型組織（200 人以上）使用需要商業授權，也可以改用 conda-forge channel%s\n' "$C_RESET"
+    else
+      CONDA_ROOT=""
+      warn "Miniconda 安裝失敗，可以之後再重跑"
+    fi
+  fi
+fi
 
 # ---------- 5. config source ----------
 step "設定檔來源"
@@ -505,55 +609,82 @@ fi
 ok "$SRC_DIR"
 
 # ---------- 6. zsh plugins ----------
-step "zsh 外掛 → $PLUGIN_DIR"
-mkdir -p "$PLUGIN_DIR"
-for p in $CORE_PLUGINS $SEL; do
-  entry="$(plugin_dir "$p")"
-  [[ -n "$entry" ]] || continue
-  name="${entry%%|*}"; url="${entry#*|}"; dest="$PLUGIN_DIR/$name"
-  if [[ -d "$dest/.git" ]]; then
-    if git -C "$dest" pull --quiet --ff-only 2>/dev/null; then ok "${name}（已更新）"
-    else warn "$name 已存在但無法更新，維持原樣"; fi
-  else
-    [[ -e "$dest" ]] && { backup "$dest"; rm -rf "$dest"; }
-    git clone --quiet --depth 1 "$url" "$dest" && ok "$name"
-  fi
-done
+if use_shell zsh; then
+  step "zsh 外掛 → $PLUGIN_DIR"
+  mkdir -p "$PLUGIN_DIR"
+  for p in $CORE_PLUGINS $SEL; do
+    entry="$(plugin_dir "$p")"
+    [[ -n "$entry" ]] || continue
+    name="${entry%%|*}"; url="${entry#*|}"; dest="$PLUGIN_DIR/$name"
+    if [[ -d "$dest/.git" ]]; then
+      if git -C "$dest" pull --quiet --ff-only 2>/dev/null; then ok "${name}（已更新）"
+      else warn "$name 已存在但無法更新，維持原樣"; fi
+    else
+      [[ -e "$dest" ]] && { backup "$dest"; rm -rf "$dest"; }
+      git clone --quiet --depth 1 "$url" "$dest" && ok "$name"
+    fi
+  done
+fi
 
 # ---------- 7. configs ----------
 step "寫入設定"
-mkdir -p "$ZSH_DIR/themes" "$(dirname "$STARSHIP_TOML")" "$ZSH_CACHE"
+mkdir -p "$(dirname "$STARSHIP_TOML")"
 
-backup "$ZSH_DIR/.zshrc" "$SRC_DIR/config/zshrc"
-cp "$SRC_DIR/config/zshrc" "$ZSH_DIR/.zshrc"
-ok "$ZSH_DIR/.zshrc"
+if use_shell zsh; then
+  mkdir -p "$ZSH_DIR/themes" "$ZSH_CACHE"
 
-if [[ "$(readlink "$HOME/.zshrc" 2>/dev/null)" != "$ZSH_DIR/.zshrc" ]]; then
-  backup "$HOME/.zshrc"
-  rm -f "$HOME/.zshrc"
-  ln -s "$ZSH_DIR/.zshrc" "$HOME/.zshrc"
+  backup "$ZSH_DIR/.zshrc" "$SRC_DIR/config/zshrc"
+  cp "$SRC_DIR/config/zshrc" "$ZSH_DIR/.zshrc"
+  ok "$ZSH_DIR/.zshrc"
+
+  if [[ "$(readlink "$HOME/.zshrc" 2>/dev/null)" != "$ZSH_DIR/.zshrc" ]]; then
+    backup "$HOME/.zshrc"
+    rm -f "$HOME/.zshrc"
+    ln -s "$ZSH_DIR/.zshrc" "$HOME/.zshrc"
+  fi
+  ok "~/.zshrc → $ZSH_DIR/.zshrc"
+
+  # Debian / Ubuntu run compinit from /etc/zsh/zshrc as well — skip it, ours is cached.
+  if [[ -f /etc/zsh/zshrc ]] && grep -q skip_global_compinit /etc/zsh/zshrc 2>/dev/null; then
+    if ! grep -q 'skip_global_compinit=1' "$HOME/.zshenv" 2>/dev/null; then
+      printf '\n# cli-setup: ~/.zshrc runs a cached compinit\nskip_global_compinit=1\n' >> "$HOME/.zshenv"
+      ok "~/.zshenv：skip_global_compinit=1"
+    fi
+  fi
+
+  # history lives in ~/.zsh/.zsh_history — bring the old ~/.zsh_history along the first time
+  if [[ -s "$HOME/.zsh_history" && ! -s "$ZSH_DIR/.zsh_history" ]]; then
+    cp -p "$HOME/.zsh_history" "$ZSH_DIR/.zsh_history"
+    ok "歷史紀錄：已從 ~/.zsh_history 複製 $(wc -l < "$ZSH_DIR/.zsh_history" | tr -d ' ') 行"
+  fi
+
+  cp "$SRC_DIR"/config/themes/*.zsh "$ZSH_DIR/themes/"
+  cp "$SRC_DIR/config/aliases.zsh" "$ZSH_DIR/aliases.zsh"
+  if has aliases; then ok "常用 alias：$ZSH_DIR/aliases.zsh"; fi
 fi
-ok "~/.zshrc → $ZSH_DIR/.zshrc"
 
-# Debian / Ubuntu run compinit from /etc/zsh/zshrc as well — skip it, ours is cached.
-if [[ -f /etc/zsh/zshrc ]] && grep -q skip_global_compinit /etc/zsh/zshrc 2>/dev/null; then
-  if ! grep -q 'skip_global_compinit=1' "$HOME/.zshenv" 2>/dev/null; then
-    printf '\n# cli-setup: ~/.zshrc runs a cached compinit\nskip_global_compinit=1\n' >> "$HOME/.zshenv"
-    ok "~/.zshenv：skip_global_compinit=1"
+if use_shell fish; then
+  # fish loads conf.d/*.fish before config.fish, so the user's own config.fish stays untouched.
+  mkdir -p "$FISH_DIR/conf.d" "$FISH_SUPPORT/themes" "$FISH_CACHE"
+
+  backup "$FISH_DIR/conf.d/cli-setup.fish" "$SRC_DIR/config/fish/cli-setup.fish"
+  cp "$SRC_DIR/config/fish/cli-setup.fish" "$FISH_DIR/conf.d/cli-setup.fish"
+  ok "$FISH_DIR/conf.d/cli-setup.fish"
+
+  cp "$SRC_DIR"/config/fish/themes/*.fish "$FISH_SUPPORT/themes/"
+  cp "$SRC_DIR/config/fish/aliases.fish" "$FISH_SUPPORT/aliases.fish"
+  if has aliases; then ok "常用 alias：$FISH_SUPPORT/aliases.fish"; fi
+
+  # things cli-setup now does itself — a second copy in config.fish would run twice
+  if [[ -f "$FISH_DIR/config.fish" ]]; then
+    dup=""
+    for pat in 'conda initialize' 'starship init' 'zoxide init' 'fzf --fish'; do
+      grep -q -- "$pat" "$FISH_DIR/config.fish" 2>/dev/null && dup="$dup「$pat」"
+    done
+    [[ -n "$dup" ]] && warn "$FISH_DIR/config.fish 裡還有 ${dup}，cli-setup 已經會處理，建議刪掉以免重複載入"
   fi
 fi
-
-# history lives in ~/.zsh/.zsh_history — bring the old ~/.zsh_history along the first time
-if [[ -s "$HOME/.zsh_history" && ! -s "$ZSH_DIR/.zsh_history" ]]; then
-  cp -p "$HOME/.zsh_history" "$ZSH_DIR/.zsh_history"
-  ok "歷史紀錄：已從 ~/.zsh_history 複製 $(wc -l < "$ZSH_DIR/.zsh_history" | tr -d ' ') 行"
-fi
-
-cp "$SRC_DIR"/config/themes/*.zsh "$ZSH_DIR/themes/"
 ok "語法高亮主題：$THEME"
-
-cp "$SRC_DIR/config/aliases.zsh" "$ZSH_DIR/aliases.zsh"
-if has aliases; then ok "常用 alias：$ZSH_DIR/aliases.zsh"; fi
 
 tmp_toml="$(mktemp)"
 cp "$SRC_DIR/config/starship.toml" "$tmp_toml"
@@ -563,8 +694,10 @@ backup "$STARSHIP_TOML" "$tmp_toml"
 cp "$tmp_toml" "$STARSHIP_TOML"; rm -f "$tmp_toml"
 ok "${STARSHIP_TOML}（時間：$(onoff "$PROMPT_TIME")，IP：$(onoff "$PROMPT_IP")）"
 
-cat > "$OPTIONS_FILE" <<EOF
+if use_shell zsh; then
+  cat > "$OPTIONS_FILE" <<EOF
 # Generated by cli-setup — re-run install.sh to change these.
+MZS_SHELLS=($SHELLS)
 MZS_PLUGINS=($CORE_PLUGINS $SEL)
 MZS_SUGGEST_COLOR=$SUGGEST_COLOR
 MZS_THEME=$THEME
@@ -574,7 +707,24 @@ MZS_PROMPT_IP=$PROMPT_IP
 MZS_TERMINAL_APP=$TERMINAL_APP
 MZS_OFFERED=($OPTIONAL)
 EOF
-ok "$OPTIONS_FILE"
+  ok "$OPTIONS_FILE"
+fi
+if use_shell fish; then
+  cat > "$FISH_OPTIONS" <<EOF
+# Generated by cli-setup — re-run install.sh to change these.
+set -g MZS_SHELLS $SHELLS
+set -g MZS_PLUGINS $CORE_PLUGINS $SEL
+set -g MZS_SUGGEST_COLOR $SUGGEST_COLOR
+set -g MZS_SUGGEST_HEX $(c256_hex "$SUGGEST_COLOR")
+set -g MZS_THEME $THEME
+set -g MZS_CONDA $CONDA_MODE
+set -g MZS_PROMPT_TIME $PROMPT_TIME
+set -g MZS_PROMPT_IP $PROMPT_IP
+set -g MZS_TERMINAL_APP $TERMINAL_APP
+set -g MZS_OFFERED $OPTIONAL
+EOF
+  ok "$FISH_OPTIONS"
+fi
 
 if [[ -n "$CONDA_ROOT" && "$CONDA_MODE" != off ]]; then
   "$CONDA_ROOT/bin/conda" config --set changeps1 False >/dev/null 2>&1 && ok "conda：changeps1 = False（載入方式：${CONDA_MODE}）"
@@ -602,38 +752,57 @@ if [[ $IS_MAC -eq 1 && $TERMINAL_APP -eq 1 ]]; then
 fi
 
 # drop cached init scripts so they're regenerated with the new setup
-rm -f "$ZSH_CACHE"/*.zsh "$ZSH_CACHE"/zcompdump*
+if use_shell zsh;  then rm -f "$ZSH_CACHE"/*.zsh "$ZSH_CACHE"/zcompdump*; fi
+if use_shell fish; then rm -f "$FISH_CACHE"/*.fish; fi
 
 # ---------- 8. default shell ----------
-ZSH_BIN="$(command -v zsh)"
-if [[ "${SHELL:-}" != */zsh ]]; then
+# Keep the login shell if it is one we just set up; otherwise switch to the first one chosen.
+CUR_SHELL="${SHELL:-}"; CUR_SHELL="${CUR_SHELL##*/}"
+NEW_SHELL=""
+use_shell "$CUR_SHELL" || NEW_SHELL="${SHELLS%% *}"
+SHELL_CHANGED=0
+if [[ -n "$NEW_SHELL" ]]; then
   step "預設 shell"
+  NEW_BIN="$(command -v "$NEW_SHELL")"
   ME="$(id -un)"
   if [[ $IS_LINUX -eq 1 ]]; then
-    grep -qx "$ZSH_BIN" /etc/shells 2>/dev/null || echo "$ZSH_BIN" | $SUDO tee -a /etc/shells >/dev/null || true
-    if $SUDO chsh -s "$ZSH_BIN" "$ME" >/dev/null 2>&1 || { have usermod && $SUDO usermod -s "$ZSH_BIN" "$ME" >/dev/null 2>&1; }; then
-      ok "預設 shell 已改成 $ZSH_BIN（重新登入後生效）"
+    grep -qx "$NEW_BIN" /etc/shells 2>/dev/null || echo "$NEW_BIN" | $SUDO tee -a /etc/shells >/dev/null || true
+    if $SUDO chsh -s "$NEW_BIN" "$ME" >/dev/null 2>&1 || { have usermod && $SUDO usermod -s "$NEW_BIN" "$ME" >/dev/null 2>&1; }; then
+      ok "預設 shell 已改成 $NEW_BIN（重新登入後生效）"; SHELL_CHANGED=1
     else
-      warn "請手動執行：chsh -s $ZSH_BIN"
+      warn "請手動執行：chsh -s $NEW_BIN"
     fi
   else
-    if chsh -s "$ZSH_BIN"; then ok "預設 shell 已改成 $ZSH_BIN"; else warn "請手動執行：chsh -s $ZSH_BIN"; fi
+    # Homebrew's fish is not in /etc/shells, and chsh refuses shells that are not listed there
+    if ! grep -qx "$NEW_BIN" /etc/shells 2>/dev/null; then
+      warn "把 $NEW_BIN 加進 /etc/shells（可能會要求輸入密碼）"
+      echo "$NEW_BIN" | sudo tee -a /etc/shells >/dev/null || true
+    fi
+    if chsh -s "$NEW_BIN"; then ok "預設 shell 已改成 $NEW_BIN"; SHELL_CHANGED=1
+    else warn "請手動執行：chsh -s $NEW_BIN"; fi
   fi
 fi
 
 # ---------- 9. warm cache & measure ----------
 step "建立快取並測量啟動時間"
-zsh -i -c exit >/dev/null 2>&1 </dev/null || true
-best=999999
-for _ in 1 2 3; do
-  t0=$(now_ms); zsh -i -c exit >/dev/null 2>&1 </dev/null || true; t1=$(now_ms)
-  (( t1 - t0 < best )) && best=$((t1 - t0))
+for s in $SHELLS; do
+  "$s" -i -c exit >/dev/null 2>&1 </dev/null || true
+  best=999999
+  for _ in 1 2 3; do
+    t0=$(now_ms); "$s" -i -c exit >/dev/null 2>&1 </dev/null || true; t1=$(now_ms)
+    (( t1 - t0 < best )) && best=$((t1 - t0))
+  done
+  ok "$s 啟動時間：約 ${best} ms"
 done
-ok "zsh 啟動時間：約 ${best} ms"
 
 # ---------- done ----------
 printf '\n%s✔ 完成！%s\n\n' "$C_GREEN" "$C_RESET"
-printf '  已啟用外掛：%s\n\n' "$CORE_PLUGINS${SEL:+ $SEL}"
+printf '  Shell：%s\n' "$(shells_label)"
+printf '  已啟用外掛：%s\n' "$CORE_PLUGINS${SEL:+ $SEL}"
+if use_shell fish; then
+  printf '  %sfish：自動建議、語法高亮、補完、↑/↓ 搜尋歷史都是內建功能，不需要另外裝外掛%s\n' "$C_DIM" "$C_RESET"
+fi
+echo
 echo "  接下來："
 if [[ $TERMINAL_DONE -eq 1 ]]; then
   printf '    1. %s完全結束 Terminal.app（⌘Q）再重新打開%s，Home/End 和字型才會生效\n' "$C_YELLOW" "$C_RESET"
@@ -650,11 +819,18 @@ else
     printf '       iTerm2 → Settings → Profiles → Text → Font · VS Code → terminal.integrated.fontFamily%s\n' "$C_RESET"
   fi
 fi
-if [[ "${SHELL:-}" == */zsh ]]; then
-  printf '    2. 重開終端機，或執行：%sexec zsh%s\n' "$C_YELLOW" "$C_RESET"
+if [[ -z "$NEW_SHELL" ]]; then
+  printf '    2. 重開終端機，或執行：%sexec %s%s\n' "$C_YELLOW" "$CUR_SHELL" "$C_RESET"
+elif [[ $SHELL_CHANGED -eq 1 ]]; then
+  printf '    2. 重新登入（預設 shell 已改成 %s），或現在先執行：%s%s%s\n' "$NEW_SHELL" "$C_YELLOW" "$NEW_SHELL" "$C_RESET"
 else
-  printf '    2. 重新登入（預設 shell 已改成 zsh），或現在先執行：%szsh%s\n' "$C_YELLOW" "$C_RESET"
+  printf '    2. 執行：%s%s%s（預設 shell 沒有改成功，見上面的訊息）\n' "$C_YELLOW" "$NEW_SHELL" "$C_RESET"
 fi
+for s in $SHELLS; do
+  if [[ "$s" != "$CUR_SHELL" && "$s" != "$NEW_SHELL" ]]; then
+    printf '       %s%s 也設定好了：直接執行 %s 就能用；要當成預設 shell：chsh -s %s%s\n' "$C_DIM" "$s" "$s" "$(command -v "$s")" "$C_RESET"
+  fi
+done
 echo "    之後想改選項，重新執行安裝指令即可（會記住這次的選擇）"
 if [[ -d "$BACKUP_DIR" ]]; then printf '\n  %s舊檔案已備份到 %s%s\n' "$C_DIM" "$BACKUP_DIR" "$C_RESET"; fi
 echo

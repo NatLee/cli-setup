@@ -15,6 +15,7 @@
     -Time on|off             Prompt 右側顯示時間
     -Ip on|off               Prompt 右側顯示本機 IP
     -Conda MODE              conda 載入方式：defer | fast | lazy | full | off
+    -Miniconda on|off        沒有 conda 時安裝 Miniconda 到 ~\miniconda3（預設 off；已有 conda 時忽略）
     -EditMode Emacs|Windows  PSReadLine 編輯模式（Emacs = 和 zsh 一樣的按鍵）
     -Font on|off             安裝 Hack Nerd Font（裝在目前使用者，不需要系統管理員）
     -WindowsTerminal on|off  把 Windows Terminal 的預設字型改成 Hack Nerd Font Mono
@@ -33,6 +34,7 @@ param(
   [string]$Time,
   [string]$Ip,
   [string]$Conda,
+  [string]$Miniconda,
   [string]$EditMode,
   [string]$Font,
   [string]$WindowsTerminal,
@@ -170,7 +172,7 @@ function Invoke-ZsSetup {
   # ---------- 2. parameters ----------
   $allowed = @{
     Theme = 'soft', 'minimal', 'default'; Time = 'on', 'off'; Ip = 'on', 'off'; Conda = 'defer', 'fast', 'lazy', 'full', 'off'
-    EditMode = 'Emacs', 'Windows'; Font = 'on', 'off'; WindowsTerminal = 'on', 'off'; WindowsPowerShell = 'on', 'off'
+    Miniconda = 'on', 'off'; EditMode = 'Emacs', 'Windows'; Font = 'on', 'off'; WindowsTerminal = 'on', 'off'; WindowsPowerShell = 'on', 'off'
   }
   foreach ($name in $allowed.Keys) {
     $v = Get-Variable -Name $name -ValueOnly -ErrorAction SilentlyContinue
@@ -200,6 +202,7 @@ function Invoke-ZsSetup {
   }
   if ($Theme)           { $ZS.Theme = $Theme }
   if ($Conda)           { $ZS.Conda = $Conda }
+  $installConda = ($Miniconda -eq 'on')     # not remembered: once installed, it is detected
   if ($Time)            { $ZS.PromptTime = ($Time -eq 'on') }
   if ($Ip)              { $ZS.PromptIp = ($Ip -eq 'on') }
   if ($Font)            { $ZS.Font = ($Font -eq 'on') }
@@ -243,13 +246,21 @@ function Invoke-ZsSetup {
       Write-Host ("   9 Prompt 時間     {0}" -f (OnOff $ZS.PromptTime))
       Write-Host ("  10 Prompt IP       {0}" -f (OnOff $ZS.PromptIp))
       Write-Host ''; Write-Host '  其他'
-      if ($condaRoot) {
+      if (-not $condaRoot) {
+        if ($SkipPackages) { Write-Host '   c 安裝 Miniconda       （-SkipPackages，略過）' -ForegroundColor DarkGray }
+        else {
+          Write-Host ("   c 安裝 Miniconda       {0}  " -f (OnOff $installConda)) -NoNewline
+          Write-Host '沒有偵測到 conda；開啟後裝到 ~\miniconda3，並套用下面的載入方式' -ForegroundColor DarkGray
+        }
+      }
+      if ($condaRoot -or ($installConda -and -not $SkipPackages)) {
         $cdesc = switch ($ZS.Conda) {
           'defer' { '背景啟用 base，提示字元立刻出現（推薦）' } 'fast' { '立刻啟用 base（啟動會等 conda）' }
           'lazy' { '第一次打 conda 才載入，base 不會自動啟用' } 'full' { '官方 conda init 行為（最慢）' } 'off' { '不載入 conda' } }
         Write-Host ("  11 Conda 載入方式  {0,-12} " -f $ZS.Conda) -NoNewline; Write-Host $cdesc -ForegroundColor DarkGray
+        if ($condaRoot) { Write-Host "       已偵測到：$condaRoot" -ForegroundColor DarkGray }
       } else {
-        Write-Host '  11 Conda 載入方式  （沒有偵測到 conda）' -ForegroundColor DarkGray
+        Write-Host '  11 Conda 載入方式  （沒有 conda）' -ForegroundColor DarkGray
       }
       Write-Host ("  12 安裝 Hack Nerd Font      {0}" -f (OnOff $ZS.Font))
       Write-Host ("  13 設定 Windows Terminal    {0}  " -f (OnOff $ZS.WindowsTerminal)) -NoNewline
@@ -262,7 +273,7 @@ function Invoke-ZsSetup {
       }
       Write-Host ''
       Write-Host '  ★ 推薦' -ForegroundColor Yellow -NoNewline
-      Write-Host '  輸入編號切換（可一次多個，例如 1 7 8），直接 Enter 開始安裝，q 離開'
+      Write-Host '  輸入編號或字母切換（可一次多個，例如 1 7 8），直接 Enter 開始安裝，q 離開'
       $answer = Read-Host '  >'
       if ($null -eq $answer -or $answer.Trim() -eq '') { break }
       foreach ($n in ($answer -split '\s+' | Where-Object { $_ })) {
@@ -273,7 +284,8 @@ function Invoke-ZsSetup {
           '^8$'  { $ZS.Theme = switch ($ZS.Theme) { 'soft' { 'minimal' } 'minimal' { 'default' } default { 'soft' } } }
           '^9$'  { $ZS.PromptTime = -not $ZS.PromptTime }
           '^10$' { $ZS.PromptIp = -not $ZS.PromptIp }
-          '^11$' { if ($condaRoot) { $ZS.Conda = switch ($ZS.Conda) { 'defer' { 'fast' } 'fast' { 'lazy' } 'lazy' { 'full' } 'full' { 'off' } default { 'defer' } } } }
+          '^c$'  { if (-not $condaRoot -and -not $SkipPackages) { $installConda = -not $installConda } }
+          '^11$' { if ($condaRoot -or $installConda) { $ZS.Conda = switch ($ZS.Conda) { 'defer' { 'fast' } 'fast' { 'lazy' } 'lazy' { 'full' } 'full' { 'off' } default { 'defer' } } } }
           '^12$' { $ZS.Font = -not $ZS.Font }
           '^13$' { $ZS.WindowsTerminal = -not $ZS.WindowsTerminal }
           '^14$' { $ZS.EditMode = if ($ZS.EditMode -eq 'Emacs') { 'Windows' } else { 'Emacs' } }
@@ -366,6 +378,35 @@ foreach ($m in $args) {
           Remove-Item $tmp -Recurse -Force
           Ok "已安裝到 $fontDir"
         } catch { Warn "字型安裝失敗：$($_.Exception.Message)" }
+      }
+    }
+  }
+
+  # ---------- 4b. Miniconda (opt-in) ----------
+  if ($installConda) {
+    if ($condaRoot) { Ok "已有 conda（$condaRoot），不另外安裝 Miniconda" }
+    elseif ($SkipPackages) { Warn '-SkipPackages：略過 Miniconda' }
+    else {
+      $dest = Join-Path $env:USERPROFILE 'miniconda3'
+      Step "Miniconda → $dest（約 100 MB，需要一點時間）"
+      if (Test-Path $dest) { Warn "$dest 已存在但不是可用的 conda，略過（刪掉後再重跑）" }
+      else {
+        $tmp = Join-Path ([IO.Path]::GetTempPath()) ("cli-setup-conda-" + [guid]::NewGuid())
+        try {
+          New-Item -ItemType Directory -Path $tmp | Out-Null
+          $exe = Join-Path $tmp 'Miniconda3.exe'
+          Invoke-WebRequest -Uri 'https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe' -OutFile $exe -UseBasicParsing
+          # Per-user, silent, no PATH / registry changes: profile.ps1 loads conda itself. /D= must come last, unquoted.
+          $proc = Start-Process -FilePath $exe -ArgumentList "/InstallationType=JustMe /RegisterPython=0 /AddToPath=0 /S /D=$dest" -Wait -PassThru
+          $condaRoot = Find-Conda
+          if ($condaRoot) {
+            $ver = & (Join-Path $condaRoot 'Scripts\conda.exe') --version 2>$null
+            Ok "$ver（$condaRoot，載入方式：$($ZS.Conda)）"
+            Write-Host '    使用 Anaconda 的 defaults channel：第一次安裝套件時 conda 可能會請你同意服務條款；' -ForegroundColor DarkGray
+            Write-Host '    大型組織（200 人以上）使用需要商業授權，也可以改用 conda-forge channel' -ForegroundColor DarkGray
+          } else { Warn "Miniconda 安裝失敗（結束代碼 $($proc.ExitCode)），可以之後再重跑" }
+        } catch { Warn "Miniconda 安裝失敗：$($_.Exception.Message)" }
+        finally { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }
       }
     }
   }
